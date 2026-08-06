@@ -5,6 +5,7 @@ import { FeedList } from "@/components/feed-list"
 import { MemberAvatar } from "@/components/member-avatar"
 import { useNow } from "@/hooks/use-now"
 import { useFeed } from "@/hooks/use-watcher-data"
+import { ANONYMOUS_NAME, VISIBILITY_COPY } from "@/lib/account"
 import { EVENT_STYLES } from "@/lib/events"
 import { relativeTimeCompact } from "@/lib/format"
 import type { Member } from "@/lib/types"
@@ -20,8 +21,12 @@ export function MemberFeedView({ memberId, member }: MemberFeedViewProps) {
 
   const name =
     member?.visibility === "anonymous"
-      ? "Anonymous"
+      ? ANONYMOUS_NAME
       : (member?.name ?? events?.[0]?.accountName ?? "Member")
+
+  // A paused member's events are dropped server-side, history included, so this
+  // feed is empty for a reason the roster knows and the list can't see.
+  const paused = member?.visibility === "paused"
 
   const entries =
     events?.filter((e) => EVENT_STYLES[e.type].direction === "up").length ?? 0
@@ -44,6 +49,8 @@ export function MemberFeedView({ memberId, member }: MemberFeedViewProps) {
               "not synced"
             ) : isLoading && !events ? (
               "reading…"
+            ) : paused ? (
+              "paused — nothing shared"
             ) : (
               <>
                 {/* Semantic colour is for direction, not for zero. */}
@@ -72,7 +79,7 @@ export function MemberFeedView({ memberId, member }: MemberFeedViewProps) {
             variant="outline"
             className="ml-auto font-mono text-3xs tracking-caps text-muted-foreground uppercase"
           >
-            {member.visibility}
+            {VISIBILITY_COPY[member.visibility].label}
           </Badge>
         ) : null}
       </header>
@@ -83,7 +90,12 @@ export function MemberFeedView({ memberId, member }: MemberFeedViewProps) {
         error={error}
         onRetry={reload}
         showAuthor={false}
-        emptyTitle={`Nothing from ${name} yet`}
+        emptyTitle={paused ? `${name} is paused` : `Nothing from ${name} yet`}
+        emptyDescription={
+          paused
+            ? "Paused members are held back from the feed entirely — past moves included. Nothing is lost; it reappears if they switch back."
+            : undefined
+        }
       />
     </div>
   )

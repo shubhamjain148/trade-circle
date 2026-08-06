@@ -1,5 +1,6 @@
 import type * as React from "react"
 
+import { ThemeToggle } from "@/components/theme-toggle"
 import { Wordmark } from "@/components/wordmark"
 
 /**
@@ -21,8 +22,11 @@ export function GateScreen({
     <div className="flex min-h-svh flex-col bg-background px-6 py-10">
       {/* Wordmark, message and footnote share one column edge at every width.
           A top-left wordmark over a centred block reads as two layouts. */}
-      <header className={COLUMN}>
+      {/* The toggle lives here too: an invite opened at 1am shouldn't be a
+          white page just because these screens are outside the app shell. */}
+      <header className={`${COLUMN} flex items-center justify-between`}>
         <Wordmark size="lg" />
+        <ThemeToggle />
       </header>
 
       <div className="flex flex-1 items-center py-10">

@@ -7,7 +7,7 @@ import { ConnectionCard } from "@/components/connection-card"
 import { useSession } from "@/components/session-provider"
 import { FEED_HREF, navigate, stripHashQuery } from "@/hooks/use-route"
 import { connectErrorMessage, VISIBILITY_COPY } from "@/lib/account"
-import { connectStartPath } from "@/lib/api"
+import { connectStartPath, patchJson, visibilityPath } from "@/lib/api"
 import type { Account, Member, Visibility } from "@/lib/types"
 
 interface SettingsViewProps {
@@ -71,7 +71,7 @@ export function SettingsView({
 
       <TrustSection />
 
-      <VisibilitySection current={member.visibility} />
+      <VisibilitySection member={member} />
 
       <section className="border-t border-border pt-5">
         <Button
@@ -189,7 +189,47 @@ function TrustSection() {
 
 const MODES: Visibility[] = ["named", "anonymous", "paused"]
 
-function VisibilitySection({ current }: { current: Visibility }) {
+/**
+ * Three modes, one of them on. Real radios behind the rows rather than buttons
+ * with aria-checked: arrow keys, the group's roving tab stop and the label/hit
+ * area all come free, and the whole row is the target — this gets tapped with a
+ * thumb.
+ *
+ * The write is optimistic and reverts on failure. Visibility governs what the
+ * group can see about you; a control that lags a round trip behind your tap
+ * invites a second tap, and a second tap here is a state you didn't choose.
+ */
+function VisibilitySection({ member }: { member: Member }) {
+  const { setMember } = useSession()
+  const [pending, setPending] = React.useState<Visibility | null>(null)
+  const [failure, setFailure] = React.useState<string | null>(null)
+
+  const select = async (mode: Visibility) => {
+    if (mode === member.visibility || pending) return
+
+    const previous = member
+    setPending(mode)
+    setFailure(null)
+    setMember({ ...member, visibility: mode })
+
+    try {
+      const saved = await patchJson<{ member: Member }>(visibilityPath, {
+        visibility: mode,
+      })
+      setMember(saved.member)
+    } catch {
+      // Put it back exactly as it was: a half-applied privacy setting is the
+      // one outcome worse than the change not happening.
+      setMember(previous)
+      setFailure(
+        "Couldn't change that — the watcher didn't answer. You're still " +
+          `${VISIBILITY_COPY[previous.visibility].label.toLowerCase()}.`
+      )
+    } finally {
+      setPending(null)
+    }
+  }
+
   return (
     <section aria-labelledby="visibility-heading">
       <h2
@@ -199,42 +239,71 @@ function VisibilitySection({ current }: { current: Visibility }) {
         How you appear
       </h2>
 
-      <ul className="divide-y divide-border">
-        {MODES.map((mode) => {
-          const isCurrent = mode === current
-          const copy = VISIBILITY_COPY[mode]
+      <div role="radiogroup" aria-labelledby="visibility-heading">
+        <div className="divide-y divide-border">
+          {MODES.map((mode) => {
+            const isCurrent = mode === member.visibility
+            const copy = VISIBILITY_COPY[mode]
 
-          return (
-            <li
-              key={mode}
-              className="grid grid-cols-[minmax(0,1fr)_auto] items-baseline gap-x-3 py-2.5"
-            >
-              <p
+            return (
+              <label
+                key={mode}
                 className={cn(
-                  "text-sm font-medium",
-                  !isCurrent && "text-muted-foreground"
+                  "-mx-2 grid cursor-pointer grid-cols-[minmax(0,1fr)_auto] items-baseline gap-x-3 rounded-md px-2 py-2.5 transition-colors",
+                  "hover:bg-foreground/[0.035] has-[:focus-visible]:ring-3 has-[:focus-visible]:ring-ring/50",
+                  pending && "cursor-progress"
                 )}
               >
-                {copy.label}
-              </p>
-              {isCurrent ? (
-                <span className="font-mono text-3xs tracking-caps text-pos-up uppercase">
-                  Current
-                </span>
-              ) : null}
-              <p className="col-span-2 pt-0.5 text-sm leading-relaxed text-muted-foreground">
-                {copy.summary}
-              </p>
-            </li>
-          )
-        })}
-      </ul>
+                <input
+                  type="radio"
+                  name="visibility"
+                  value={mode}
+                  checked={isCurrent}
+                  disabled={pending !== null}
+                  onChange={() => void select(mode)}
+                  className="sr-only"
+                />
 
-      {/* Named rather than faked: a switch that silently does nothing is worse
-          than a sentence that says who to ask. */}
-      <p className="pt-2.5 font-mono text-2xs leading-relaxed tracking-wide text-muted-foreground">
-        Switching modes isn't wired up yet — ask whoever runs the watcher.
-      </p>
+                <p
+                  className={cn(
+                    "text-sm font-medium",
+                    !isCurrent && "text-muted-foreground"
+                  )}
+                >
+                  {copy.label}
+                </p>
+
+                {pending === mode ? (
+                  <span className="font-mono text-3xs tracking-caps text-muted-foreground uppercase">
+                    Saving…
+                  </span>
+                ) : isCurrent ? (
+                  <span className="font-mono text-3xs tracking-caps text-pos-up uppercase">
+                    Current
+                  </span>
+                ) : null}
+
+                <p className="col-span-2 pt-0.5 text-sm leading-relaxed text-muted-foreground">
+                  {copy.summary}
+                </p>
+              </label>
+            )
+          })}
+        </div>
+      </div>
+
+      {failure ? (
+        <p role="alert" className="pt-2.5 text-sm text-destructive">
+          {failure}
+        </p>
+      ) : (
+        /* When it applies matters as much as what it does: this is read-time,
+           not a flag on new events, so the feed's past changes with it. */
+        <p className="pt-2.5 font-mono text-2xs leading-relaxed tracking-wide text-muted-foreground">
+          Applies straight away, to what's already in the feed as well as
+          what's next.
+        </p>
+      )}
     </section>
   )
 }

@@ -78,7 +78,15 @@ export function formatQtyChange(value: number): string {
   return `${value < 0 ? "−" : "+"}${pct}% qty`
 }
 
+/**
+ * "Rahul Menon" -> RM. Lowercase connecting words are skipped, so the feed's
+ * stand-in for an anonymous member — "Someone in the group" — reads as S rather
+ * than the nonsense "SI".
+ */
 export function initials(name: string): string {
-  const parts = name.trim().split(/\s+/).slice(0, 2)
-  return parts.map((part) => part[0]?.toUpperCase() ?? "").join("")
+  const parts = name.trim().split(/\s+/).filter(Boolean)
+  const named = parts.filter((part) => part[0] === part[0]?.toUpperCase())
+  const chosen = (named.length > 0 ? named : parts).slice(0, 2)
+
+  return chosen.map((part) => part[0]?.toUpperCase() ?? "").join("")
 }

@@ -99,6 +99,14 @@ export function connectErrorMessage(code: string): string {
   return CONNECT_ERRORS[code] ?? "The connection didn't go through."
 }
 
+/**
+ * What the feed actually calls an anonymous member — the server writes this
+ * string onto every event and message it attributes (apps/server/src/feed.ts).
+ * Anywhere the client names that state itself has to use the same words, or the
+ * tab, the header and the rows below it read as three different people.
+ */
+export const ANONYMOUS_NAME = "Someone in the group"
+
 export const VISIBILITY_COPY: Record<
   Visibility,
   { label: string; summary: string }
@@ -109,10 +117,11 @@ export const VISIBILITY_COPY: Record<
   },
   anonymous: {
     label: "Anonymous",
-    summary: "Your moves appear, attributed to Anonymous.",
+    summary: `Your moves still appear, credited to "${ANONYMOUS_NAME}" — including the ones already there.`,
   },
   paused: {
     label: "Paused",
-    summary: "Nothing of yours reaches the feed. The watcher keeps polling.",
+    summary:
+      "Your moves leave the feed entirely, past ones included. The watcher keeps polling, so nothing is lost.",
   },
 }

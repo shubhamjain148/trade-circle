@@ -19,6 +19,8 @@ interface FeedListProps {
   onRetry?: () => void
   showAuthor?: boolean
   emptyTitle?: string
+  /** Overrides the "waiting for the watcher" line when silence has a reason. */
+  emptyDescription?: string
 }
 
 interface DaySection {
@@ -57,6 +59,7 @@ export function FeedList({
   onRetry,
   showAuthor = true,
   emptyTitle = "No moves yet",
+  emptyDescription,
 }: FeedListProps) {
   const now = useNow()
   const sections = React.useMemo(
@@ -90,8 +93,11 @@ export function FeedList({
     return (
       <FeedNotice
         title={emptyTitle}
-        description="No activity yet — the watcher will post here when someone makes a move."
-        hint={POLLING_CADENCE}
+        description={
+          emptyDescription ??
+          "No activity yet — the watcher will post here when someone makes a move."
+        }
+        hint={emptyDescription ? undefined : POLLING_CADENCE}
       />
     )
   }

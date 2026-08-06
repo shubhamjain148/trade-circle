@@ -108,8 +108,12 @@ export function ChatTimeline({
             <h3 className="font-mono text-2xs font-medium tracking-caps text-muted-foreground uppercase">
               {section.label}
             </h3>
-            {/* The unit belongs on the newest block — the one you land on. */}
-            {index === sections.length - 1 ? (
+            {/* The unit belongs on the newest block — the one you land on —
+                but only if that block actually has a number in it. A day of
+                pure conversation would be labelled "% of portfolio" over
+                nothing. */}
+            {index === sections.length - 1 &&
+            section.items.some((item) => item.kind === "event") ? (
               <span className="font-mono text-3xs tracking-caps text-muted-foreground uppercase">
                 % of portfolio
               </span>

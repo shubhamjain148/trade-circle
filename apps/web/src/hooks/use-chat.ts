@@ -10,6 +10,14 @@ export const MAX_MESSAGE_LENGTH = 2000
 const POLL_MS = 4000
 
 /**
+ * A watcher that's down stays down for minutes, not seconds. Backing off keeps
+ * a dead server from collecting one request every four seconds for as long as
+ * the tab is open — on a phone that is the battery, and in the log it buries
+ * the outage that caused it. Doubles to a minute, resets on the first success.
+ */
+const MAX_BACKOFF_MS = 60_000
+
+/**
  * A timeline row plus the two states that only exist on this side of the wire:
  * a message that has been typed but not yet acknowledged, and one that failed
  * to send. Both are the client's problem, so neither is in the API shape.
@@ -80,6 +88,8 @@ export function useChat(member: Member): Chat {
   // Cursor is a ref, not state: advancing it must not restart the poll loop.
   const cursor = React.useRef("")
   const inFlight = React.useRef(false)
+  /** Consecutive failed syncs — the only input to the poll interval. */
+  const failures = React.useRef(0)
 
   const sync = React.useCallback(async (signal?: AbortSignal) => {
     if (inFlight.current) return
@@ -93,10 +103,12 @@ export function useChat(member: Member): Chat {
       if (page.items.length > 0) {
         setItems((current) => merge(current, page.items))
       }
+      failures.current = 0
       setError(undefined)
       setUpdatedAt(Date.now())
     } catch (cause) {
       if (signal?.aborted) return
+      failures.current += 1
       setError(cause instanceof Error ? cause : new Error(String(cause)))
     } finally {
       inFlight.current = false
@@ -106,22 +118,39 @@ export function useChat(member: Member): Chat {
 
   React.useEffect(() => {
     const controller = new AbortController()
+    let timer = 0
 
-    void sync(controller.signal)
+    // Self-scheduling rather than setInterval: the gap has to depend on how the
+    // last request went, and an interval can't be told that.
+    function delay(): number {
+      if (failures.current === 0) return POLL_MS
+      return Math.min(POLL_MS * 2 ** failures.current, MAX_BACKOFF_MS)
+    }
 
-    const timer = window.setInterval(() => {
-      if (!document.hidden) void sync(controller.signal)
-    }, POLL_MS)
+    function schedule() {
+      if (controller.signal.aborted) return
+      timer = window.setTimeout(() => void run(), delay())
+    }
 
-    // Coming back to the tab should not cost a four-second wait.
+    async function run() {
+      if (!document.hidden) await sync(controller.signal)
+      schedule()
+    }
+
+    void sync(controller.signal).then(schedule)
+
+    // Coming back to the tab should not cost a four-second wait — and, after an
+    // outage, should not cost the whole backoff either. Re-arm from now.
     const onVisibility = () => {
-      if (!document.hidden) void sync(controller.signal)
+      if (document.hidden) return
+      window.clearTimeout(timer)
+      void run()
     }
     document.addEventListener("visibilitychange", onVisibility)
 
     return () => {
       controller.abort()
-      window.clearInterval(timer)
+      window.clearTimeout(timer)
       document.removeEventListener("visibilitychange", onVisibility)
     }
   }, [sync])
@@ -195,7 +224,11 @@ export function useChat(member: Member): Chat {
     [post]
   )
 
-  const reload = React.useCallback(() => void sync(), [sync])
+  // An explicit "try again" is a fresh start, not the next step of a backoff.
+  const reload = React.useCallback(() => {
+    failures.current = 0
+    void sync()
+  }, [sync])
 
   return { items, isLoading, error, updatedAt, send, retry, reload }
 }

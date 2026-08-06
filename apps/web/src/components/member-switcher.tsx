@@ -1,6 +1,7 @@
 import { Tabs, TabsList, TabsTrigger } from "@workspace/ui/components/tabs"
 import { Skeleton } from "@workspace/ui/components/skeleton"
 
+import { ANONYMOUS_NAME } from "@/lib/account"
 import type { FeedView, Member } from "@/lib/types"
 
 const GROUP_VALUE = "group"
@@ -72,7 +73,7 @@ export function MemberSwitcher({
         </TabsTrigger>
         {tabs.map((member) => (
           <TabsTrigger key={member.id} value={member.id} className={TRIGGER}>
-            {member.visibility === "anonymous" ? "Anonymous" : member.name}
+            {member.visibility === "anonymous" ? ANONYMOUS_NAME : member.name}
           </TabsTrigger>
         ))}
       </TabsList>

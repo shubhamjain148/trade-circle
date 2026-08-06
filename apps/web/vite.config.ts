@@ -16,7 +16,8 @@ export default defineConfig({
   },
   server: {
     proxy: {
-      "/api": "http://localhost:3001",
+      // Override to point a scratch dev server at a scratch API instance.
+      "/api": process.env.WATCHER_API ?? "http://localhost:3001",
     },
   },
 })

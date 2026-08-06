@@ -95,25 +95,46 @@ export function JoinView({ token }: JoinViewProps) {
   }
 
   if (join.phase === "welcome") {
+    // Re-opening an invite on a second phone is a normal thing to do, and the
+    // person doing it has already connected. Sending them to a connect screen
+    // they've finished with reads as though the watcher forgot them.
+    const connected =
+      state.status === "signed-in" && state.account?.status === "active"
+
     return (
       <GateScreen>
         <div className="flex flex-col gap-5 duration-300 ease-out animate-in fade-in slide-in-from-bottom-1 motion-reduce:animate-none">
           <h1 className="font-heading text-2xl leading-tight font-medium tracking-tight text-balance">
-            You're in, {firstName(join.member.name)}.
+            {connected ? "Welcome back" : "You're in"},{" "}
+            {firstName(join.member.name)}.
           </h1>
 
           <p className="border-t border-border pt-4 text-sm leading-relaxed text-muted-foreground">
-            One thing left: connect INDmoney so the group can see your moves.
-            Read-only — percentages of your portfolio, never amounts.
+            {connected
+              ? "INDmoney is already connected on this account — the watcher is reading your holdings and posting changes to the group."
+              : "One thing left: connect INDmoney so the group can see your moves. Read-only — percentages of your portfolio, never amounts."}
           </p>
 
           <div className="flex flex-wrap items-center gap-2 pt-1">
-            <Button onClick={() => navigate(SETTINGS_HREF)}>
-              Connect INDmoney
-            </Button>
-            <Button variant="ghost" onClick={() => navigate(FEED_HREF)}>
-              See the feed first
-            </Button>
+            {connected ? (
+              <>
+                <Button onClick={() => navigate(FEED_HREF)}>
+                  Go to the feed
+                </Button>
+                <Button variant="ghost" onClick={() => navigate(SETTINGS_HREF)}>
+                  Settings
+                </Button>
+              </>
+            ) : (
+              <>
+                <Button onClick={() => navigate(SETTINGS_HREF)}>
+                  Connect INDmoney
+                </Button>
+                <Button variant="ghost" onClick={() => navigate(FEED_HREF)}>
+                  See the feed first
+                </Button>
+              </>
+            )}
           </div>
         </div>
       </GateScreen>

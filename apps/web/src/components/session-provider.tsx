@@ -19,6 +19,13 @@ interface SessionValue {
   state: SessionState
   /** Re-reads /api/me. Used after joining, connecting and disconnecting. */
   refresh: () => Promise<void>
+  /**
+   * Writes the signed-in member locally, without a round trip. This is how an
+   * optimistic change (and its revert) reaches every surface that reads the
+   * session — a change that only lands after the server answers reads as lag.
+   * A no-op unless we're signed in: there is no member to replace otherwise.
+   */
+  setMember: (member: Member) => void
   signOut: () => Promise<void>
 }
 
@@ -47,6 +54,12 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
     }
   }, [])
 
+  const setMember = React.useCallback((member: Member) => {
+    setState((current) =>
+      current.status === "signed-in" ? { ...current, member } : current
+    )
+  }, [])
+
   const signOut = React.useCallback(async () => {
     // Optimistic: the cookie is gone server-side either way, and leaving a
     // signed-in shell on screen after "Log out" is the worse failure.
@@ -73,8 +86,8 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
   }, [refresh])
 
   const value = React.useMemo(
-    () => ({ state, refresh, signOut }),
-    [state, refresh, signOut]
+    () => ({ state, refresh, setMember, signOut }),
+    [state, refresh, setMember, signOut]
   )
 
   return (

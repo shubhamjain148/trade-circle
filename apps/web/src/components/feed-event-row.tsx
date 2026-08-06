@@ -7,6 +7,7 @@ import {
   formatQtyChange,
   relativeTimeCompact,
 } from "@/lib/format"
+import { instrumentLabel } from "@/lib/instrument"
 import type { FeedEvent } from "@/lib/types"
 
 interface FeedEventRowProps {
@@ -31,6 +32,9 @@ export function FeedEventRow({
 }: FeedEventRowProps) {
   const style = EVENT_STYLES[event.type]
   const exited = event.type === "EXITED"
+  // Holdings from INDmoney carry a numeric code where a ticker would be; the
+  // row leads with whichever of the two a friend would recognise.
+  const instrument = instrumentLabel(event.symbol, event.instrumentName)
 
   return (
     <li className="-mx-2 grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-x-3 rounded-md px-2 py-2 transition-colors hover:bg-foreground/[0.035]">
@@ -59,22 +63,34 @@ export function FeedEventRow({
           >
             {style.tag}
           </span>
-          <span className="truncate font-mono text-sm font-semibold tracking-tight">
-            {event.symbol}
+          {/* A ticker is a code and earns monospace; a company name is prose
+              and doesn't. Same size and weight either way, so the column keeps
+              one rhythm whichever the instrument gave us. */}
+          <span
+            className={cn(
+              "truncate text-sm font-semibold tracking-tight",
+              instrument.isTicker ? "font-mono" : "font-heading"
+            )}
+          >
+            {instrument.primary}
           </span>
         </div>
 
-        <p className="truncate text-xs text-muted-foreground">
-          {event.instrumentName}
-          {event.qtyChangePct !== undefined ? (
-            <>
-              <span className="px-1 opacity-50">·</span>
-              <span className="tabular-nums">
-                {formatQtyChange(event.qtyChangePct)}
-              </span>
-            </>
-          ) : null}
-        </p>
+        {instrument.detail || event.qtyChangePct !== undefined ? (
+          <p className="truncate text-xs text-muted-foreground">
+            {instrument.detail}
+            {event.qtyChangePct !== undefined ? (
+              <>
+                {instrument.detail ? (
+                  <span className="px-1 opacity-50">·</span>
+                ) : null}
+                <span className="tabular-nums">
+                  {formatQtyChange(event.qtyChangePct)}
+                </span>
+              </>
+            ) : null}
+          </p>
+        ) : null}
       </div>
 
       <div className="w-16 shrink-0 text-right">

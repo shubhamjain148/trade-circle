@@ -59,6 +59,16 @@ export async function postJson<T>(path: string, body: unknown): Promise<T> {
   return (await response.json()) as T
 }
 
+export async function patchJson<T>(path: string, body: unknown): Promise<T> {
+  const response = await request(path, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  })
+
+  return (await response.json()) as T
+}
+
 /** For the 204s: logout and disconnect. */
 export async function send(path: string, method: "POST" | "DELETE") {
   await request(path, { method })
@@ -78,6 +88,7 @@ export const chatPath = (after?: string) =>
 
 export const membersPath = "/api/members"
 export const mePath = "/api/me"
+export const visibilityPath = "/api/me/visibility"
 export const sessionPath = "/api/auth/session"
 export const logoutPath = "/api/auth/logout"
 export const connectPath = "/api/connect/indmoney"
