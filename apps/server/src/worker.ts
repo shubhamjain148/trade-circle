@@ -9,7 +9,12 @@ import { Backoff, runPollTick } from "./poller/tick.js";
 import { createPusher } from "./push/notify.js";
 import type { VapidConfig } from "./push/webpush.js";
 import type { ChatRoom } from "./room-object.js";
-import { ROOM_NAME, type Room, type RoomMember } from "./room.js";
+import {
+  ROOM_NAME,
+  type ReactionBroadcastMap,
+  type Room,
+  type RoomMember,
+} from "./room.js";
 import { D1Storage } from "./storage/d1.js";
 import type { TimelineItem } from "./types.js";
 
@@ -281,6 +286,22 @@ class DurableRoom implements Room {
     } catch (err) {
       console.warn(
         JSON.stringify({ msg: "room broadcast failed", err: message(err) }),
+      );
+    }
+  }
+
+  /**
+   * The same one-call fan-out for reaction summaries. Separate from broadcast()
+   * because the room has to personalise `mine` per socket and therefore cannot
+   * reuse the single-serialisation path; see room-object.ts.
+   */
+  async broadcastReactions(reactions: ReactionBroadcastMap): Promise<void> {
+    if (Object.keys(reactions).length === 0) return;
+    try {
+      await this.namespace.getByName(ROOM_NAME).broadcastReactions(reactions);
+    } catch (err) {
+      console.warn(
+        JSON.stringify({ msg: "room reaction broadcast failed", err: message(err) }),
       );
     }
   }

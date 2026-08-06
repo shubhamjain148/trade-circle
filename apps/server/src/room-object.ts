@@ -1,7 +1,9 @@
 import { DurableObject } from "cloudflare:workers";
 import {
   parseClientMessage,
+  personaliseReactions,
   relayTypingAt,
+  type ReactionBroadcastMap,
   type RoomMember,
   type RoomServerMessage,
 } from "./room.js";
@@ -63,6 +65,33 @@ export class ChatRoom extends DurableObject {
   async broadcast(items: TimelineItem[]): Promise<void> {
     if (items.length === 0) return;
     this.send({ type: "items", items });
+  }
+
+  /**
+   * Fan out reaction summaries. The one broadcast in here that cannot be
+   * serialised once, because `mine` is a fact about the reader rather than
+   * about the item — so this loops the sockets, reads each one's attachment,
+   * and stamps the flag per person. Five friends and a handful of emoji: the
+   * cost of being correct here is a few string concatenations.
+   *
+   * A socket whose attachment is missing still gets the frame with `mine`
+   * false. Wrong pill fill beats a silently dropped update, and the next poll
+   * corrects it within the minute.
+   */
+  async broadcastReactions(reactions: ReactionBroadcastMap): Promise<void> {
+    if (Object.keys(reactions).length === 0) return;
+    for (const socket of this.ctx.getWebSockets()) {
+      const member = socket.deserializeAttachment() as RoomMember | null;
+      const payload: RoomServerMessage = {
+        type: "reactions",
+        reactions: personaliseReactions(reactions, member?.id ?? ""),
+      };
+      try {
+        socket.send(JSON.stringify(payload));
+      } catch {
+        // Same as send(): a socket that died mid-loop is the runtime's problem.
+      }
+    }
   }
 
   /**

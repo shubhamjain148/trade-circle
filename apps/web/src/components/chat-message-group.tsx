@@ -8,9 +8,14 @@ import {
 } from "@workspace/ui/components/message"
 import { cn } from "@workspace/ui/lib/utils"
 
+import {
+  Reactable,
+  type ReactionHandlers,
+} from "@/components/chat-reactions"
 import { MemberAvatar } from "@/components/member-avatar"
 import type { ChatItem } from "@/hooks/use-chat"
 import { absoluteTime, relativeTimeCompact } from "@/lib/format"
+import { reactionKey, type ReactionMap } from "@/lib/types"
 
 export type ChatMessageItem = Extract<ChatItem, { kind: "message" }>
 
@@ -24,10 +29,11 @@ export interface MessageGroupItem {
   messages: ChatMessageItem[]
 }
 
-interface ChatMessageGroupProps {
+interface ChatMessageGroupProps extends ReactionHandlers {
   group: MessageGroupItem
   now?: number
   onRetry: (id: string) => void
+  reactions: ReactionMap
 }
 
 /**
@@ -40,6 +46,8 @@ export function ChatMessageGroup({
   group,
   now,
   onRetry,
+  reactions,
+  onReact,
 }: ChatMessageGroupProps) {
   const { own, messages } = group
   const last = messages[messages.length - 1]
@@ -64,37 +72,79 @@ export function ChatMessageGroup({
           </MessageHeader>
         )}
 
-        {messages.map((message) => (
-          <Bubble
-            key={message.id}
-            variant={
-              message.failed ? "destructive" : own ? "outline" : "secondary"
-            }
-            className="max-w-[85%] sm:max-w-[75%]"
-          >
-            <BubbleContent
+        {messages.map((message) => {
+          const bubble = (
+            <Bubble
+              variant={
+                message.failed ? "destructive" : own ? "outline" : "secondary"
+              }
+              className="max-w-full"
+            >
+              <BubbleContent
+                className={cn(
+                  "whitespace-pre-wrap",
+                  message.pending && "opacity-60"
+                )}
+              >
+                {message.body}
+              </BubbleContent>
+
+              {message.failed ? (
+                <p className="flex items-center gap-2 px-1 font-mono text-3xs tracking-caps uppercase">
+                  <span className="text-destructive">Not sent</span>
+                  <button
+                    type="button"
+                    onClick={() => onRetry(message.id)}
+                    className="text-muted-foreground underline underline-offset-2 hover:text-foreground"
+                  >
+                    Retry
+                  </button>
+                </p>
+              ) : null}
+            </Bubble>
+          )
+
+          // A line that has not landed yet has no server id to react *to*, and
+          // one that failed to send may never get one. Both render as the bare
+          // bubble they always were — no affordance, no placeholder.
+          if (message.pending || message.failed) {
+            return (
+              <div
+                key={message.id}
+                className={cn(
+                  "w-fit max-w-[85%] sm:max-w-[75%]",
+                  own && "self-end"
+                )}
+              >
+                {bubble}
+              </div>
+            )
+          }
+
+          return (
+            <Reactable
+              key={message.id}
+              itemKind="message"
+              itemId={message.id}
+              reactions={reactions[reactionKey("message", message.id)]}
+              side={own ? "end" : "start"}
+              label={
+                own
+                  ? "React to your message"
+                  : `React to ${group.authorName}'s message`
+              }
+              onReact={onReact}
+              // The width cap moves out here from the bubble so the pills wrap
+              // against the same edge the speech does.
               className={cn(
-                "whitespace-pre-wrap",
-                message.pending && "opacity-60"
+                "w-fit max-w-[85%] sm:max-w-[75%]",
+                own && "self-end"
               )}
             >
-              {message.body}
-            </BubbleContent>
-
-            {message.failed ? (
-              <p className="flex items-center gap-2 px-1 font-mono text-3xs tracking-caps uppercase">
-                <span className="text-destructive">Not sent</span>
-                <button
-                  type="button"
-                  onClick={() => onRetry(message.id)}
-                  className="text-muted-foreground underline underline-offset-2 hover:text-foreground"
-                >
-                  Retry
-                </button>
-              </p>
-            ) : null}
-          </Bubble>
-        ))}
+              {bubble}
+            </Reactable>
+          )
+        })}
 
         {/* Not uppercased, unlike the day and event labels: "45M" reads as a
             unit, "45m" reads as a time, and this column is full of them. */}

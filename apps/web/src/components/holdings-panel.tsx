@@ -4,12 +4,15 @@ import { Button } from "@workspace/ui/components/button"
 import { Skeleton } from "@workspace/ui/components/skeleton"
 import { cn } from "@workspace/ui/lib/utils"
 
+import { HoldingSparkline } from "@/components/holding-sparkline"
+import { useHoldingsHistory } from "@/hooks/use-holdings-history"
 import { useNow } from "@/hooks/use-now"
 import { useResource } from "@/hooks/use-resource"
 import { memberPositionsPath } from "@/lib/api"
 import { absoluteTime, relativeTimeCompact } from "@/lib/format"
 import { instrumentLabel } from "@/lib/instrument"
-import type { Holding } from "@/lib/types"
+import { describeSeries, heldFor } from "@/lib/sparkline"
+import type { Holding, HoldingHistory } from "@/lib/types"
 
 /**
  * How many rows a portfolio shows before it asks. Five is about where a phone
@@ -51,6 +54,9 @@ export function HoldingsPanel({
   const { data, error, isLoading, reload } = useResource<Holding[]>(
     memberPositionsPath(memberId)
   )
+  // A second, parallel read: the rows are the panel and must not wait on a
+  // month of history to appear. See use-holdings-history.ts.
+  const history = useHoldingsHistory(memberId)
   const now = useNow()
   const [expanded, setExpanded] = React.useState(false)
 
@@ -82,6 +88,14 @@ export function HoldingsPanel({
           ) : null}
         </h3>
         <span className="shrink-0 font-mono text-3xs tracking-caps text-muted-foreground uppercase tabular-nums">
+          {/* The sparklines' span, said once for the column rather than drawn as
+              an axis under every 44px mark. */}
+          {history.days.length > 1 ? (
+            <>
+              <span>{history.days.length}d trend</span>
+              <span className="px-1 opacity-50">·</span>
+            </>
+          ) : null}
           {asOf ? (
             <time dateTime={asOf} title={absoluteTime(asOf)}>
               as of {relativeTimeCompact(asOf, now)}
@@ -119,7 +133,14 @@ export function HoldingsPanel({
         <>
           <ul id="holdings-rows">
             {shown.map((holding) => (
-              <HoldingRow key={holding.instrumentId} holding={holding} />
+              <HoldingRow
+                key={holding.instrumentId}
+                holding={holding}
+                series={history.seriesFor(holding.instrumentId)}
+                days={history.days}
+                historyLoading={history.isLoading}
+                now={now}
+              />
             ))}
           </ul>
 
@@ -157,13 +178,50 @@ export function HoldingsPanel({
   )
 }
 
-function HoldingRow({ holding }: { holding: Holding }) {
+interface HoldingRowProps {
+  holding: Holding
+  /** This instrument's weight series, once the history read lands. */
+  series: HoldingHistory | undefined
+  days: string[]
+  historyLoading: boolean
+  now: number
+}
+
+/**
+ * The sparkline sits in its own column between the name and the weight, and the
+ * column claims its width from the first paint — before the history request has
+ * answered — so nothing shifts when the marks arrive.
+ *
+ * It costs no row height: the mark is 14px inside a name block that is already
+ * ~36px whenever a row carries a company name under its ticker. The one caption
+ * that can outgrow that (a "held 3w" under the line on a row with no second
+ * name line) is exactly the case worth four pixels, because it is the sentence
+ * the chart is drawn to say.
+ */
+function HoldingRow({
+  holding,
+  series,
+  days,
+  historyLoading,
+  now,
+}: HoldingRowProps) {
   const instrument = instrumentLabel(holding.symbol, holding.name)
   // % of portfolio is already 0-100, so the bar is the number, drawn.
   const width = Math.min(100, Math.max(0, holding.pctOfPortfolio))
 
+  // An answer with no days in it is not "everything is new" — it is a watcher
+  // that has never polled, or a history read that failed. Either way the row
+  // says nothing rather than accusing every holding of being a day old.
+  const ready = !historyLoading && days.length > 0
+  const hasLine = (series?.points.length ?? 0) > 1
+  const age = !ready
+    ? null
+    : hasLine
+      ? heldFor(series?.openedAt ?? null, now)
+      : "new"
+
   return (
-    <li className="relative grid grid-cols-[minmax(0,1fr)_auto] items-baseline gap-x-3 border-b border-border py-2">
+    <li className="relative grid grid-cols-[minmax(0,1fr)_auto_auto] items-baseline gap-x-3 border-b border-border py-2">
       <div className="min-w-0">
         {/* A ticker is a code and earns monospace; a company name is prose and
             doesn't — same call the feed row makes, so the two read as one app. */}
@@ -179,6 +237,28 @@ function HoldingRow({ holding }: { holding: Holding }) {
           <p className="truncate text-xs text-muted-foreground">
             {instrument.detail}
           </p>
+        ) : null}
+      </div>
+
+      {/* Nothing is drawn until there is something true to draw: while the read
+          is in flight, and after one that failed or came back empty, the column
+          is simply blank. A row of lone dots would read as "all of this is new". */}
+      <div className="w-11 shrink-0 self-center">
+        {ready ? <HoldingSparkline history={series} days={days} /> : null}
+        {age ? (
+          <p className="pt-0.5 text-right font-mono text-3xs tracking-wide text-muted-foreground tabular-nums">
+            {age}
+          </p>
+        ) : null}
+        {/* The chart in words. Screen readers get the absolute numbers the
+            auto-scaled line can't carry; sighted readers get the same sentence
+            from the SVG's <title> on hover. */}
+        {ready ? (
+          <span className="sr-only">
+            {hasLine
+              ? describeSeries(series?.points ?? [])
+              : "New holding — no weight history yet."}
+          </span>
         ) : null}
       </div>
 
@@ -206,12 +286,15 @@ function HoldingsSkeleton({ rows = 4 }: { rows?: number }) {
           /* py-2 matches the real row, so nothing jolts on arrival. */
           <li
             key={index}
-            className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 border-b border-border py-2"
+            className="grid grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-x-3 border-b border-border py-2"
           >
             <Skeleton
               className="h-3.5 rounded-sm"
               style={{ width: `${44 - index * 6}%` }}
             />
+            {/* The sparkline column, held open so the real rows land in the
+                same geometry the skeleton drew. */}
+            <Skeleton className="h-3.5 w-11 rounded-sm" />
             <Skeleton className="h-3.5 w-10 rounded-sm" />
           </li>
         ))}

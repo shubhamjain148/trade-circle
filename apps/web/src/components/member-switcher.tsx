@@ -7,6 +7,14 @@ import type { FeedView, Member } from "@/lib/types"
 const GROUP_VALUE = "group"
 
 /**
+ * Stats is a peer of the feeds rather than a member, so it rides the same
+ * control but is routed by the caller instead of through FeedView — widening
+ * that union would push a screen that has no feed into every consumer of it.
+ * Last in the row on purpose: the roster is what gets tapped at night.
+ */
+const STATS_VALUE = "stats"
+
+/**
  * The hit box is a thumb (44px tall), the type stays terminal-small. These are
  * the only navigation in the product and they get tapped one-handed at night.
  */
@@ -17,6 +25,9 @@ interface MemberSwitcherProps {
   isLoading: boolean
   view: FeedView
   onViewChange: (view: FeedView) => void
+  /** True on #/stats, where no feed is on screen and no member tab is current. */
+  isStats?: boolean
+  onStats?: () => void
 }
 
 /**
@@ -28,6 +39,8 @@ export function MemberSwitcher({
   isLoading,
   view,
   onViewChange,
+  isStats = false,
+  onStats,
 }: MemberSwitcherProps) {
   if (isLoading && !members) {
     return (
@@ -39,7 +52,11 @@ export function MemberSwitcher({
     )
   }
 
-  const value = view.kind === "group" ? GROUP_VALUE : view.memberId
+  const value = isStats
+    ? STATS_VALUE
+    : view.kind === "group"
+      ? GROUP_VALUE
+      : view.memberId
 
   // A deep link (or a failed members fetch) can put us on a member the list
   // doesn't contain. Keep a tab for it so the control still shows where we are.
@@ -62,6 +79,7 @@ export function MemberSwitcher({
       value={value}
       onValueChange={(next) => {
         const nextValue = String(next)
+        if (nextValue === STATS_VALUE) return onStats?.()
         onViewChange(
           nextValue === GROUP_VALUE
             ? { kind: "group" }
@@ -84,6 +102,9 @@ export function MemberSwitcher({
             {member.visibility === "anonymous" ? ANONYMOUS_NAME : member.name}
           </TabsTrigger>
         ))}
+        <TabsTrigger value={STATS_VALUE} className={TRIGGER}>
+          Stats
+        </TabsTrigger>
       </TabsList>
     </Tabs>
   )

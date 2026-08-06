@@ -14,6 +14,10 @@ import {
   ChatMessageGroup,
   type MessageGroupItem,
 } from "@/components/chat-message-group"
+import {
+  Reactable,
+  type ReactionHandlers,
+} from "@/components/chat-reactions"
 import { FeedEventRow } from "@/components/feed-event-row"
 import {
   FeedNotice,
@@ -23,12 +27,14 @@ import {
 import type { ChatItem } from "@/hooks/use-chat"
 import { useNow } from "@/hooks/use-now"
 import { dayKey, dayLabel } from "@/lib/format"
-import type { FeedEvent } from "@/lib/types"
+import { reactionKey, type FeedEvent, type ReactionMap } from "@/lib/types"
 
-interface ChatTimelineProps {
+interface ChatTimelineProps extends ReactionHandlers {
   items: ChatItem[]
   /** The signed-in member — the only reason a row knows it is "yours". */
   memberId: string
+  /** Keyed by reactionKey(); a missing entry is simply an unreacted row. */
+  reactions: ReactionMap
   isLoading: boolean
   error?: Error
   onReload: () => void
@@ -134,10 +140,12 @@ function DaySeparator({ label }: { label: string }) {
 export function ChatTimeline({
   items,
   memberId,
+  reactions,
   isLoading,
   error,
   onReload,
   onRetryMessage,
+  onReact,
 }: ChatTimelineProps) {
   const now = useNow()
   const entries = React.useMemo(
@@ -209,12 +217,25 @@ export function ChatTimeline({
                      top and bottom, keeping the feed's mono tag, % and time. */
                   <div className="-mx-2 divide-y divide-border border-y border-border">
                     {entry.events.map((event) => (
-                      <FeedEventRow
+                      /* The Reactable is the band's cell, so `divide-y` still
+                         separates one trade from the next and the pills sit
+                         inside the row they belong to. FeedEventRow itself is
+                         untouched — the member feed renders the same component
+                         with no wrapper and is pixel-for-pixel what it was. */
+                      <Reactable
                         key={event.id}
-                        as="div"
-                        event={event}
-                        now={now}
-                      />
+                        itemKind="event"
+                        itemId={event.id}
+                        reactions={reactions[reactionKey("event", event.id)]}
+                        label={`React to ${event.accountName}'s ${event.symbol} move`}
+                        onReact={onReact}
+                        /* The pills are indented to the row's own gutter and
+                           bring their own bottom padding, so a band with no
+                           reactions is the band that was already there. */
+                        pillsClassName="px-2 pb-1.5"
+                      >
+                        <FeedEventRow as="div" event={event} now={now} />
+                      </Reactable>
                     ))}
                   </div>
                 ) : (
@@ -222,6 +243,8 @@ export function ChatTimeline({
                     group={entry.group}
                     now={now}
                     onRetry={onRetryMessage}
+                    reactions={reactions}
+                    onReact={onReact}
                   />
                 )}
               </MessageScrollerItem>

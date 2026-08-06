@@ -13,9 +13,11 @@ import {
   noopNotifier,
   notifyFeedEvents,
   parseClientMessage,
+  personaliseReactions,
   relayTypingAt,
   TYPING_MIN_GAP_MS,
   type Notifier,
+  type ReactionBroadcastMap,
   type Room,
   type RoomMember,
 } from "../room.js";
@@ -37,12 +39,18 @@ const T = (minutes: number) => new Date(BASE + minutes * 60_000).toISOString();
 /** Records what the Worker would have pushed, and can be told to fail. */
 class FakeRoom implements Room {
   readonly broadcasts: TimelineItem[][] = [];
+  readonly reactionBroadcasts: ReactionBroadcastMap[] = [];
   readonly upgrades: { url: string; member: RoomMember }[] = [];
   fails = false;
 
   async broadcast(items: TimelineItem[]): Promise<void> {
     if (this.fails) throw new Error("room unreachable");
     this.broadcasts.push(items);
+  }
+
+  async broadcastReactions(reactions: ReactionBroadcastMap): Promise<void> {
+    if (this.fails) throw new Error("room unreachable");
+    this.reactionBroadcasts.push(reactions);
   }
 
   async upgrade(request: Request, member: RoomMember): Promise<Response> {
@@ -233,6 +241,116 @@ describe("POST /api/chat", () => {
     });
     assert.equal(res.status, 400);
     assert.equal(room.broadcasts.length, before);
+  });
+});
+
+describe("reaction broadcasts", () => {
+  test("`mine` is decided per socket, not per broadcast", () => {
+    const broadcast: ReactionBroadcastMap = {
+      "message:m-1": [
+        { emoji: "🚀", count: 2, who: ["Shubham", "Rahul"], memberIds: ["m1", "m2"] },
+        { emoji: "💀", count: 1, who: ["Rahul"], memberIds: ["m2"] },
+      ],
+    };
+
+    // The same frame, read by two different people in the same room.
+    assert.deepEqual(personaliseReactions(broadcast, "m1"), {
+      "message:m-1": [
+        { emoji: "🚀", count: 2, mine: true, who: ["Shubham", "Rahul"] },
+        { emoji: "💀", count: 1, mine: false, who: ["Rahul"] },
+      ],
+    });
+    assert.deepEqual(personaliseReactions(broadcast, "m2"), {
+      "message:m-1": [
+        { emoji: "🚀", count: 2, mine: true, who: ["Shubham", "Rahul"] },
+        { emoji: "💀", count: 1, mine: true, who: ["Rahul"] },
+      ],
+    });
+    // Nobody: an unattached socket sees the counts and none of them as its own.
+    assert.deepEqual(personaliseReactions(broadcast, ""), {
+      "message:m-1": [
+        { emoji: "🚀", count: 2, mine: false, who: ["Shubham", "Rahul"] },
+        { emoji: "💀", count: 1, mine: false, who: ["Rahul"] },
+      ],
+    });
+  });
+
+  test("member ids never survive personalisation", () => {
+    const out = personaliseReactions(
+      { "event:e-1": [{ emoji: "🔥", count: 1, who: ["Rahul"], memberIds: ["m2"] }] },
+      "m1",
+    );
+    assert.equal("memberIds" in out["event:e-1"][0], false);
+  });
+});
+
+describe("PUT/DELETE /api/chat/reactions", () => {
+  test("a toggle reaches the room with reactor ids attached", async () => {
+    const posted = await app.request("/api/chat", {
+      method: "POST",
+      headers: { cookie, "content-type": "application/json" },
+      body: JSON.stringify({ body: "TSLA looks done" }),
+    });
+    const message = (await posted.json()) as TimelineItem;
+
+    const before = room.reactionBroadcasts.length;
+    const res = await app.request("/api/chat/reactions", {
+      method: "PUT",
+      headers: { cookie, "content-type": "application/json" },
+      body: JSON.stringify({ itemKind: "message", itemId: message.id, emoji: "💀" }),
+    });
+    assert.equal(res.status, 200);
+
+    assert.equal(room.reactionBroadcasts.length, before + 1);
+    const pushed = room.reactionBroadcasts.at(-1)!;
+    assert.deepEqual(pushed, {
+      [`message:${message.id}`]: [
+        { emoji: "💀", count: 1, who: ["Shubham"], memberIds: ["m1"] },
+      ],
+    });
+  });
+
+  test("removing broadcasts the empty summary, not silence", async () => {
+    const posted = await app.request("/api/chat", {
+      method: "POST",
+      headers: { cookie, "content-type": "application/json" },
+      body: JSON.stringify({ body: "or not" }),
+    });
+    const message = (await posted.json()) as TimelineItem;
+    const body = JSON.stringify({
+      itemKind: "message",
+      itemId: message.id,
+      emoji: "👀",
+    });
+
+    await app.request("/api/chat/reactions", {
+      method: "PUT",
+      headers: { cookie, "content-type": "application/json" },
+      body,
+    });
+    const before = room.reactionBroadcasts.length;
+    await app.request("/api/chat/reactions", {
+      method: "DELETE",
+      headers: { cookie, "content-type": "application/json" },
+      body,
+    });
+
+    assert.equal(room.reactionBroadcasts.length, before + 1);
+    // An explicit empty array is the message: "clear the pills you are showing".
+    assert.deepEqual(room.reactionBroadcasts.at(-1), {
+      [`message:${message.id}`]: [],
+    });
+  });
+
+  test("a rejected toggle is never broadcast", async () => {
+    const before = room.reactionBroadcasts.length;
+    const res = await app.request("/api/chat/reactions", {
+      method: "PUT",
+      headers: { cookie, "content-type": "application/json" },
+      body: JSON.stringify({ itemKind: "message", itemId: "x", emoji: "🦄" }),
+    });
+    assert.equal(res.status, 400);
+    assert.equal(room.reactionBroadcasts.length, before);
   });
 });
 

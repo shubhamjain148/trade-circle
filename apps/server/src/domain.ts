@@ -68,13 +68,36 @@ export interface FeedEventRow {
 }
 
 /**
- * One line of group chat. Deliberately thin: no threads, no edits, no reactions —
- * the timeline it lands in is the feature, the message is just a row in it.
+ * One line of group chat. Deliberately thin: no threads, no edits — the
+ * timeline it lands in is the feature, the message is just a row in it.
+ * Reactions hang off it from the outside (ReactionRow), keyed by id, which is
+ * how they reach feed events too without either table knowing about the other.
  */
 export interface MessageRow {
   id: string;
   memberId: string;
   body: string;
+  createdAt: string;
+}
+
+/** What a reaction can be attached to. Both halves of the merged timeline. */
+export type ReactionItemKind = "message" | "event";
+
+/** The identity of a timeline row, as reactions refer to it. */
+export interface ReactionTarget {
+  kind: ReactionItemKind;
+  id: string;
+}
+
+/**
+ * One tap. The whole row is the primary key, so inserting twice is a no-op and
+ * deleting names exactly what was inserted — that is the entire toggle.
+ */
+export interface ReactionRow {
+  itemKind: ReactionItemKind;
+  itemId: string;
+  memberId: string;
+  emoji: string;
   createdAt: string;
 }
 

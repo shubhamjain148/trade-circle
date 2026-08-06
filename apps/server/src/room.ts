@@ -2,7 +2,7 @@ import type { FeedEventRow } from "./domain.js";
 import { toFeedEvents } from "./feed.js";
 import type { Pusher } from "./push/notify.js";
 import type { Storage } from "./storage/index.js";
-import type { TimelineItem } from "./types.js";
+import type { ReactionMap, TimelineItem } from "./types.js";
 
 /**
  * The live-delivery seam, and everything about it that is runtime-agnostic.
@@ -33,11 +33,56 @@ export const TYPING_MIN_GAP_MS = 2_000;
 /** Nothing a client legitimately sends comes near this. */
 export const MAX_CLIENT_MESSAGE_BYTES = 256;
 
-/** Room → browser. Both arms are additive: a client that ignores one still works. */
+/** Room → browser. Every arm is additive: a client that ignores one still works. */
 export type RoomServerMessage =
   | { type: "items"; items: TimelineItem[] }
   /** Ephemeral. Never stored, never replayed, never sent back to its author. */
-  | { type: "typing"; memberId: string; name: string };
+  | { type: "typing"; memberId: string; name: string }
+  /**
+   * Whole current summaries for the items whose reactions just changed — the
+   * same shape and the same semantics as the `reactions` field of a poll
+   * response, so the client has one merge path for both. Never a diff, so a
+   * frame that arrives twice, out of order, or alongside a poll carrying the
+   * same fact all settle on the same pills.
+   */
+  | { type: "reactions"; reactions: ReactionMap };
+
+/**
+ * One emoji's standing, as the *room* carries it — before `mine` exists.
+ *
+ * `mine` is the one field in a reaction summary that is not a fact about the
+ * item but a fact about the reader, and a fan-out has five readers. So the
+ * broadcast carries the reactor ids instead and the room stamps `mine` per
+ * socket on the way out (see room-object.ts). Nothing is leaked by doing it
+ * this way: member ids are already public to every signed-in client via
+ * /api/members, and the names in `who` are the same names the poll sends.
+ */
+export interface ReactionBroadcastEntry {
+  emoji: string;
+  count: number;
+  who: string[];
+  memberIds: string[];
+}
+
+/** Keyed "<kind>:<id>", exactly like ReactionMap. See reactionKey() in chat.ts. */
+export type ReactionBroadcastMap = Record<string, ReactionBroadcastEntry[]>;
+
+/** Drop the ids, decide `mine`: one reader's view of one broadcast. */
+export function personaliseReactions(
+  reactions: ReactionBroadcastMap,
+  memberId: string,
+): ReactionMap {
+  const out: ReactionMap = {};
+  for (const [key, entries] of Object.entries(reactions)) {
+    out[key] = entries.map((entry) => ({
+      emoji: entry.emoji,
+      count: entry.count,
+      mine: entry.memberIds.includes(memberId),
+      who: entry.who,
+    }));
+  }
+  return out;
+}
 
 /** Browser → room. Sends still go over HTTP POST; this carries presence-of-thought only. */
 export type RoomClientMessage = { type: "typing" };
@@ -57,13 +102,23 @@ export interface Notifier {
   broadcast(items: TimelineItem[]): Promise<void>;
 }
 
-/** The Notifier plus the half only the HTTP layer needs: the upgrade itself. */
+/** The Notifier plus the halves only the HTTP layer needs. */
 export interface Room extends Notifier {
   /**
    * Hand a validated upgrade request to the room. The caller has already proven
    * the session; `member` is what the room will attribute typing signals to.
    */
   upgrade(request: Request, member: RoomMember): Promise<Response>;
+  /**
+   * Fan out reaction summaries. Not on Notifier, deliberately: the poll tick
+   * publishes trades and has no reactions to send, and widening the interface it
+   * depends on to carry something it can never produce would be noise.
+   *
+   * Same contract as broadcast(): swallow failures. A reaction that is in the
+   * database has succeeded whether or not a socket was listening — the next
+   * poll carries it either way, which is the whole point of the delta below.
+   */
+  broadcastReactions(reactions: ReactionBroadcastMap): Promise<void>;
 }
 
 /** What both entry points get when there is no room: Node, and every test. */
