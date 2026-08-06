@@ -38,7 +38,10 @@ export interface Candidate {
 }
 
 const DEFAULTS: Required<DiffOptions> = {
-  qtyThreshold: 0.01,
+  // User decision (2026-08-06): report every size change — a $10 nibble is
+  // signal in a friend group. 0.01% is not a filter, only a float-noise guard
+  // so API rounding jitter can't fabricate events; any real trade clears it.
+  qtyThreshold: 0.0001,
   valueDriftMax: 0.02,
   costDriftMax: 0.01,
 };

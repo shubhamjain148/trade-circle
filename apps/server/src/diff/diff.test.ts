@@ -81,11 +81,19 @@ test("resize emits SIZE_UP / SIZE_DOWN with relative change", () => {
 });
 
 test("fractional drift below the threshold is ignored", () => {
-  // US holdings are fractional; a 0.5% wobble is not a trade.
+  // Default threshold is a float-noise guard only (user decision: report
+  // every real size change). 0.5% is a trade and must surface...
   const events = diffPositions("a1", [p("aapl", 20, 190, 200)], [
     p("aapl", 20.1, 190, 200),
   ], AT);
-  assert.equal(events.length, 0);
+  assert.equal(events.length, 1);
+  assert.equal(events[0].type, "SIZE_UP");
+
+  // ...while sub-0.01% jitter still doesn't.
+  const noise = diffPositions("a1", [p("aapl", 20, 190, 200)], [
+    p("aapl", 20.000001, 190, 200),
+  ], AT);
+  assert.equal(noise.length, 0);
 
   const tighter = diffPositions(
     "a1",
