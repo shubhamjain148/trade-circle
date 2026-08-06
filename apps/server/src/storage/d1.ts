@@ -1,6 +1,7 @@
 import type {
   AccountRow,
   AccountStatus,
+  DeviceLinkRow,
   FeedEventRow,
   InviteTokenRow,
   MemberRole,
@@ -409,6 +410,67 @@ export class D1Storage implements Storage {
       memberId,
     );
     return Number(res.meta.changes ?? 0);
+  }
+
+  async createDeviceLink(link: DeviceLinkRow): Promise<void> {
+    await this.run(
+      `INSERT INTO device_links (token_hash, member_id, created_at, expires_at, used_at)
+       VALUES (?, ?, ?, ?, ?)`,
+      link.tokenHash,
+      link.memberId,
+      link.createdAt,
+      link.expiresAt,
+      nul(link.usedAt),
+    );
+  }
+
+  /**
+   * Read-then-write for the same reason as consumeInvite: three outcomes the
+   * caller must tell apart, and no interactive transaction to hold them in.
+   * Expiry is checked before the stamp — a link that ran out of time is never
+   * reported as spent.
+   */
+  async consumeDeviceLink(
+    tokenHash: string,
+    now: string,
+  ): Promise<DeviceLinkRow | "used" | "expired" | undefined> {
+    const row = await this.first(
+      `SELECT * FROM device_links WHERE token_hash = ?`,
+      tokenHash,
+    );
+    if (!row) return undefined;
+    if (row.used_at) return "used";
+    if (String(row.expires_at) <= now) return "expired";
+    await this.run(
+      `UPDATE device_links SET used_at = ? WHERE token_hash = ? AND used_at IS NULL`,
+      now,
+      tokenHash,
+    );
+    return {
+      tokenHash: String(row.token_hash),
+      memberId: String(row.member_id),
+      createdAt: String(row.created_at),
+      expiresAt: String(row.expires_at),
+      usedAt: now,
+    };
+  }
+
+  async listDeviceLinks(memberId: string): Promise<DeviceLinkRow[]> {
+    const rows = await this.all(
+      `SELECT * FROM device_links WHERE member_id = ? ORDER BY created_at, token_hash`,
+      memberId,
+    );
+    return rows.map((r) => ({
+      tokenHash: String(r.token_hash),
+      memberId: String(r.member_id),
+      createdAt: String(r.created_at),
+      expiresAt: String(r.expires_at),
+      usedAt: r.used_at === null ? null : String(r.used_at),
+    }));
+  }
+
+  async deleteDeviceLink(tokenHash: string): Promise<void> {
+    await this.run(`DELETE FROM device_links WHERE token_hash = ?`, tokenHash);
   }
 
   async createSession(session: SessionRow): Promise<void> {

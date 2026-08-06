@@ -1,5 +1,6 @@
 import type {
   AccountRow,
+  DeviceLinkRow,
   FeedEventRow,
   InviteTokenRow,
   MemberRow,
@@ -42,6 +43,20 @@ export interface Storage {
   listInvites(): Promise<InviteTokenRow[]>;
   /** Voids a member's unspent links; returns how many. Spent ones are history and stay. */
   deletePendingInvites(memberId: string): Promise<number>;
+
+  createDeviceLink(link: DeviceLinkRow): Promise<void>;
+  /**
+   * Single-use and time-boxed. "used" and "expired" are separate answers
+   * because they are separate screens: one says "sign in on the device that
+   * already worked", the other says "mint a fresh one".
+   */
+  consumeDeviceLink(
+    tokenHash: string,
+    now: string,
+  ): Promise<DeviceLinkRow | "used" | "expired" | undefined>;
+  /** One member's links, oldest first — the cap counts these. */
+  listDeviceLinks(memberId: string): Promise<DeviceLinkRow[]>;
+  deleteDeviceLink(tokenHash: string): Promise<void>;
 
   createSession(session: SessionRow): Promise<void>;
   getSession(tokenHash: string, now: string): Promise<SessionRow | undefined>;

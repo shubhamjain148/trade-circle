@@ -11,8 +11,14 @@ import type { Member, SessionResponse } from "@/lib/types"
 type JoinPhase =
   | { phase: "exchanging" }
   | { phase: "welcome"; member: Member }
+  /** The same handshake, spent on a device link: a member adding a screen. */
+  | { phase: "linked"; member: Member }
   /** 410 — the link worked once already. */
   | { phase: "used" }
+  /** 410 with link_used — a device link, not an invite: different sentence. */
+  | { phase: "device-used" }
+  /** 410 with link_expired — device links are worth fifteen minutes. */
+  | { phase: "expired" }
   /** 400 — never a link this server issued, or mangled in transit. */
   | { phase: "invalid" }
   /** Missing token: someone typed #/join, or the link lost its query. */
@@ -57,19 +63,33 @@ export function JoinView({ token }: JoinViewProps) {
 
       void (async () => {
         try {
-          const { member } = await postJson<SessionResponse>(sessionPath, {
-            inviteToken: token,
-          })
+          const { member, device } = await postJson<SessionResponse>(
+            sessionPath,
+            { inviteToken: token }
+          )
           // Seed the shell before the welcome lands, so the feed behind it is
           // already correct when they tap through.
           await refresh()
-          if (alive.current) setJoin({ phase: "welcome", member })
+          // Which door this was is the server's answer, not the URL's: a link
+          // pasted without its &device=1 must still land on the right screen.
+          if (alive.current) {
+            setJoin({ phase: device ? "linked" : "welcome", member })
+          }
         } catch (cause) {
           if (!alive.current) return
           const status = cause instanceof ApiError ? cause.status : 0
+          const code = cause instanceof ApiError ? cause.code : undefined
           setJoin({
             phase:
-              status === 410 ? "used" : status === 400 ? "invalid" : "failed",
+              code === "link_expired"
+                ? "expired"
+                : code === "link_used"
+                  ? "device-used"
+                  : status === 410
+                    ? "used"
+                    : status === 400
+                      ? "invalid"
+                      : "failed",
           })
         }
       })()
@@ -90,6 +110,34 @@ export function JoinView({ token }: JoinViewProps) {
         >
           Opening your invite…
         </p>
+      </GateScreen>
+    )
+  }
+
+  // A device link is the same person arriving on a second screen, so this says
+  // less than the invite welcome does: no connect push (they're connected on
+  // the device they minted it from), no "you're in" — they were already in.
+  if (join.phase === "linked") {
+    return (
+      <GateScreen>
+        <div className="flex flex-col gap-5 duration-300 ease-out animate-in fade-in slide-in-from-bottom-1 motion-reduce:animate-none">
+          <h1 className="font-heading text-2xl leading-tight font-medium tracking-tight text-balance">
+            Device linked — you're in as {firstName(join.member.name)}.
+          </h1>
+
+          <p className="border-t border-border pt-4 text-sm leading-relaxed text-muted-foreground">
+            Your other device is still signed in. Nothing about your INDmoney
+            connection changed — this screen just joins the ones you already
+            read the feed on.
+          </p>
+
+          <div className="flex flex-wrap items-center gap-2 pt-1">
+            <Button onClick={() => navigate(FEED_HREF)}>Go to the feed</Button>
+            <Button variant="ghost" onClick={() => navigate(SETTINGS_HREF)}>
+              Settings
+            </Button>
+          </div>
+        </div>
       </GateScreen>
     )
   }
@@ -145,9 +193,19 @@ export function JoinView({ token }: JoinViewProps) {
 }
 
 const FAILURES: Record<
-  "used" | "invalid" | "no-token" | "failed",
+  "used" | "device-used" | "expired" | "invalid" | "no-token" | "failed",
   { title: string; body: string; hint: string }
 > = {
+  expired: {
+    title: "That link expired — mint a fresh one.",
+    body: "Device links are good for fifteen minutes. On the device you're already signed in on, open Settings → Devices and tap Link another device.",
+    hint: "Fifteen minutes, single use.",
+  },
+  "device-used": {
+    title: "That device link has already been used.",
+    body: "It signs in one device, once. If this isn't the device you scanned it on, mint another from Settings → Devices on a screen you're already signed in on.",
+    hint: "One link, one device, once.",
+  },
   used: {
     title: "That invite has already been used.",
     body: "Invite links work once. If this was you on another phone, sign in there — otherwise ask whoever runs the watcher for a fresh link.",

@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { DatabaseSync, type StatementSync } from "node:sqlite";
 import { fileURLToPath } from "node:url";
@@ -23,13 +23,18 @@ import type { Storage } from "./index.js";
  * d1.ts expects, these tests break, which is the point.
  */
 
-const MIGRATION = join(
+const MIGRATIONS_DIR = join(
   dirname(fileURLToPath(import.meta.url)),
   "..",
   "..",
   "migrations",
-  "0001_init.sql",
 );
+// Every migration in order, so tables added later (device_links, …) are
+// exercised here too, not just whatever 0001 happened to contain.
+const MIGRATIONS = readdirSync(MIGRATIONS_DIR)
+  .filter((f) => f.endsWith(".sql"))
+  .sort()
+  .map((f) => join(MIGRATIONS_DIR, f));
 
 class ShimResult {
   constructor(
@@ -103,7 +108,7 @@ let storage: Storage;
 before(() => {
   raw = new DatabaseSync(":memory:");
   raw.exec("PRAGMA foreign_keys = ON");
-  raw.exec(readFileSync(MIGRATION, "utf8"));
+  for (const m of MIGRATIONS) raw.exec(readFileSync(m, "utf8"));
   storage = new D1Storage(new ShimDatabase(raw) as never);
 });
 

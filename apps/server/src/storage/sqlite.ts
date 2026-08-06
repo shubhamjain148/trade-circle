@@ -4,6 +4,7 @@ import { DatabaseSync } from "node:sqlite";
 import type {
   AccountRow,
   AccountStatus,
+  DeviceLinkRow,
   FeedEventRow,
   InviteTokenRow,
   MemberRole,
@@ -114,6 +115,18 @@ CREATE TABLE IF NOT EXISTS invite_tokens (
   used_at    TEXT
 );
 CREATE INDEX IF NOT EXISTS invite_tokens_member ON invite_tokens(member_id);
+
+-- Second-device links: a member signing themselves in elsewhere. Short-lived
+-- and single-use; see migrations/0002_device_links.sql for why it is its own
+-- table rather than a column on invite_tokens.
+CREATE TABLE IF NOT EXISTS device_links (
+  token_hash TEXT PRIMARY KEY,
+  member_id  TEXT NOT NULL REFERENCES members(id),
+  created_at TEXT NOT NULL,
+  expires_at TEXT NOT NULL,
+  used_at    TEXT
+);
+CREATE INDEX IF NOT EXISTS device_links_member ON device_links(member_id);
 
 CREATE TABLE IF NOT EXISTS sessions (
   token_hash TEXT PRIMARY KEY,
@@ -532,6 +545,66 @@ export class SqliteStorage implements Storage {
       .prepare(`DELETE FROM invite_tokens WHERE member_id = ? AND used_at IS NULL`)
       .run(memberId);
     return Number(res.changes);
+  }
+
+  async createDeviceLink(link: DeviceLinkRow): Promise<void> {
+    this.db
+      .prepare(
+        `INSERT INTO device_links (token_hash, member_id, created_at, expires_at, used_at)
+         VALUES (?, ?, ?, ?, ?)`,
+      )
+      .run(
+        link.tokenHash,
+        link.memberId,
+        link.createdAt,
+        link.expiresAt,
+        link.usedAt,
+      );
+  }
+
+  /**
+   * Expiry is checked before the stamp, so a link that ran out of time is never
+   * reported as spent: the two states send the friend to different screens.
+   */
+  async consumeDeviceLink(
+    tokenHash: string,
+    now: string,
+  ): Promise<DeviceLinkRow | "used" | "expired" | undefined> {
+    const row = this.db
+      .prepare(`SELECT * FROM device_links WHERE token_hash = ?`)
+      .get(tokenHash) as Record<string, string | null> | undefined;
+    if (!row) return undefined;
+    if (row.used_at) return "used";
+    if (String(row.expires_at) <= now) return "expired";
+    this.db
+      .prepare(`UPDATE device_links SET used_at = ? WHERE token_hash = ?`)
+      .run(now, tokenHash);
+    return {
+      tokenHash: String(row.token_hash),
+      memberId: String(row.member_id),
+      createdAt: String(row.created_at),
+      expiresAt: String(row.expires_at),
+      usedAt: now,
+    };
+  }
+
+  async listDeviceLinks(memberId: string): Promise<DeviceLinkRow[]> {
+    const rows = this.db
+      .prepare(
+        `SELECT * FROM device_links WHERE member_id = ? ORDER BY created_at, token_hash`,
+      )
+      .all(memberId) as Record<string, string | null>[];
+    return rows.map((r) => ({
+      tokenHash: String(r.token_hash),
+      memberId: String(r.member_id),
+      createdAt: String(r.created_at),
+      expiresAt: String(r.expires_at),
+      usedAt: r.used_at ?? null,
+    }));
+  }
+
+  async deleteDeviceLink(tokenHash: string): Promise<void> {
+    this.db.prepare(`DELETE FROM device_links WHERE token_hash = ?`).run(tokenHash);
   }
 
   async createSession(session: SessionRow): Promise<void> {

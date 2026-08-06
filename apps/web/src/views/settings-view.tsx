@@ -4,6 +4,7 @@ import { Button, buttonVariants } from "@workspace/ui/components/button"
 import { cn } from "@workspace/ui/lib/utils"
 
 import { ConnectionCard } from "@/components/connection-card"
+import { DevicesSection } from "@/components/devices-section"
 import { GroupSection } from "@/components/group-section"
 import { useSession } from "@/components/session-provider"
 import { FEED_HREF, navigate, stripHashQuery } from "@/hooks/use-route"
@@ -73,6 +74,10 @@ export function SettingsView({
       <TrustSection />
 
       <VisibilitySection member={member} />
+
+      {/* Everyone's, unlike the roster below: signing yourself in on your own
+          phone is not an administrative act. */}
+      <DevicesSection member={member} />
 
       {/* Admin only, and absent — not disabled — for everyone else: a control
           you can see but never use is a worse answer than no control. */}

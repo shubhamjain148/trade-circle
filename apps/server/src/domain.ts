@@ -93,6 +93,21 @@ export interface InviteTokenRow {
   usedAt: string | null;
 }
 
+/**
+ * A member signing *themselves* in on a second device — phone alongside laptop.
+ * Same single-use, hash-only shape as an invite, with one difference that
+ * matters: it expires in minutes, because it is minted, read off a screen and
+ * spent within one sitting. An invite is handed to someone else and may sit in
+ * a chat app for a day; a device link that outlives the sitting is only risk.
+ */
+export interface DeviceLinkRow {
+  tokenHash: string;
+  memberId: string;
+  createdAt: string;
+  expiresAt: string;
+  usedAt: string | null;
+}
+
 export interface SessionRow {
   tokenHash: string;
   memberId: string;

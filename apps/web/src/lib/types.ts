@@ -20,6 +20,25 @@ export interface FeedEvent {
 }
 
 /**
+ * GET /api/members/:id/positions — one line of what someone holds right now,
+ * as opposed to what they did (FeedEvent). Sorted largest first by the server.
+ *
+ * Weight and identity only, and that is a boundary rather than a convenience:
+ * the server's stored row carries quantity, average cost and market value, and
+ * none of the three may ever appear here.
+ */
+export interface Holding {
+  /** INDmoney's internal key — stable across ticker renames. */
+  instrumentId: string
+  symbol: string
+  name: string
+  /** Position size as % of that friend's portfolio — never rupee amounts. */
+  pctOfPortfolio: number
+  /** When the last poll wrote this row. */
+  updatedAt: string
+}
+
+/**
  * One line of group chat. Always attributed by name: visibility governs what
  * the watcher publishes about a portfolio, not what a friend says out loud.
  */
@@ -45,6 +64,22 @@ export interface ChatPage {
   items: TimelineItem[]
   cursor: string
 }
+
+/**
+ * Frames on /api/chat/ws. Mirrors RoomServerMessage/RoomClientMessage in
+ * apps/server/src/room.ts.
+ *
+ * "items" carries exactly what a poll would have carried, which is the whole
+ * trick: the socket is a delivery mechanism, not a second protocol, so the
+ * client merges it through the same reconcile path and dedupes by id.
+ */
+export type RoomServerMessage =
+  | { type: "items"; items: TimelineItem[] }
+  /** Ephemeral, never stored, never echoed back to its own author. */
+  | { type: "typing"; memberId: string; name: string }
+
+/** The only thing the browser sends up the socket. Messages still go by POST. */
+export type RoomClientMessage = { type: "typing" }
 
 export type Visibility = "named" | "anonymous" | "paused"
 
@@ -114,9 +149,25 @@ export interface Me {
   account: Account | null
 }
 
-/** POST /api/auth/session — the invite handshake returns just the member. */
+/**
+ * POST /api/auth/session — the invite handshake returns just the member.
+ * `device` is set only when the token was a device link rather than an invite:
+ * same handshake, same shape, different sentence on the other side ("device
+ * linked" rather than "you're in", and no push to connect INDmoney).
+ */
 export interface SessionResponse {
   member: Member
+  device?: boolean
+}
+
+/**
+ * POST /api/auth/device-link — the link exists in this response and nowhere
+ * else. The server stored a hash; nothing can hand the URL back a second time.
+ */
+export interface DeviceLink {
+  url: string
+  expiresAt: string
+  ttlMs: number
 }
 
 /**
