@@ -18,8 +18,8 @@ const source = new McpPortfolioSource(mcp, {
 });
 const backoff = new Backoff();
 
-const poll = () =>
-  runPollTick(storage, source, { staggerMs: 30_000, backoff });
+const poll = (opts?: { force?: boolean }) =>
+  runPollTick(storage, source, { staggerMs: 30_000, backoff, ...opts });
 
 const app = createApp({ storage, poll, config, mcp });
 

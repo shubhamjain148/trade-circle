@@ -7,20 +7,28 @@ import type { Position } from "../domain.js";
 // than turned into a fake zero — a dropped row shows up as "no change", an
 // invented zero would show up as a false EXITED event in someone's feed.
 
-const ID_KEYS = ["ind_key", "indKey", "instrument_id", "instrumentId", "isin", "id"];
+// First-choice keys verified against a real networth_holdings capture
+// (2026-08-06): rows carry investment_code / investment / total_units /
+// unit_price / market_value / invested_amount / holding_percent, no ticker.
+const ID_KEYS = ["investment_code", "ind_key", "indKey", "instrument_id", "instrumentId", "isin", "id"];
 const SYMBOL_KEYS = ["symbol", "ticker", "trading_symbol", "tradingSymbol", "scrip"];
-const NAME_KEYS = ["name", "instrument_name", "instrumentName", "company_name", "display_name"];
-const QTY_KEYS = ["qty", "quantity", "units", "holding_qty", "shares"];
+const NAME_KEYS = ["investment", "name", "instrument_name", "instrumentName", "company_name", "display_name"];
+const QTY_KEYS = ["total_units", "qty", "quantity", "units", "holding_qty", "shares"];
 const AVG_KEYS = ["avg_cost", "avgCost", "average_price", "avg_price", "buy_avg", "avg_buy_price"];
+const INVESTED_KEYS = ["invested_amount", "invested", "total_invested", "cost_value"];
 const VALUE_KEYS = ["mkt_value", "market_value", "current_value", "marketValue", "value"];
-const PRICE_KEYS = ["ltp", "last_price", "current_price", "price", "nav"];
+const PRICE_KEYS = ["unit_price", "ltp", "last_price", "current_price", "price", "nav"];
 const LIST_KEYS = ["holdings", "positions", "items", "data", "results", "rows"];
 
 /** Unwraps a CallToolResult into the JSON the tool meant to return. */
 export function toolPayload(result: unknown): unknown {
   if (result === null || typeof result !== "object") return result;
   const r = result as { structuredContent?: unknown; content?: unknown };
-  if (r.structuredContent !== undefined) return r.structuredContent;
+  // FastMCP (INDmoney's stack, verified live 2026-08-06) wraps a string return
+  // as structuredContent: { result: "<json>" } — unwrap and parse it.
+  if (r.structuredContent !== null && r.structuredContent !== undefined) {
+    return unwrapResult(r.structuredContent);
+  }
   if (Array.isArray(r.content)) {
     for (const block of r.content) {
       const b = block as { type?: string; text?: string };
@@ -59,6 +67,21 @@ export function netWorthDigest(result: unknown): string | null {
     .slice(0, 16);
 }
 
+function unwrapResult(structured: unknown): unknown {
+  if (isRecord(structured) && Object.keys(structured).length === 1 && "result" in structured) {
+    const inner = structured.result;
+    if (typeof inner === "string") {
+      try {
+        return JSON.parse(inner) as unknown;
+      } catch {
+        return inner;
+      }
+    }
+    return inner;
+  }
+  return structured;
+}
+
 function findRows(payload: unknown): Record<string, unknown>[] {
   if (Array.isArray(payload)) return payload.filter(isRecord);
   if (!isRecord(payload)) return [];
@@ -85,12 +108,17 @@ function toPosition(row: Record<string, unknown>): Position | null {
   const mktValue = num(row, VALUE_KEYS) ?? (price === null ? null : qty * price);
   if (mktValue === null) return null;
 
+  // INDmoney gives total invested_amount, not per-unit cost; derive it — the
+  // H1 split heuristic depends on a real cost basis, not a placeholder zero.
+  const invested = num(row, INVESTED_KEYS);
+  const avgCost = num(row, AVG_KEYS) ?? (invested === null ? 0 : invested / qty);
+
   return {
     instrumentId,
     symbol: symbol ?? instrumentId,
     name: str(row, NAME_KEYS) ?? symbol ?? instrumentId,
     qty,
-    avgCost: num(row, AVG_KEYS) ?? 0,
+    avgCost,
     mktValue,
   };
 }

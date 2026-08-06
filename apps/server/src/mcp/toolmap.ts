@@ -1,13 +1,10 @@
-// ⚠️ EVERYTHING HERE IS A GUESS.
-//
-// INDmoney publishes no tool schemas (appendix 1 §2.5); the names and argument
-// shapes below are reverse-engineered from third-party clients and are known to
-// drift — one client calls the holdings tool `networth_holdings`, another
-// `get_user_networth_v2`. The first genuine connect writes the real `tools/list`
-// output into the tool_catalog table; read it, then correct this file.
-//
-// Until then: prefer whichever alias the captured catalog actually contains
-// (`resolveToolMap`), and treat a missing tool as an alert, not a crash.
+// Verified against a real capture, 2026-08-06 (tool_catalog): 15 tools;
+// `networth_holdings` requires asset_type ∈ IND_STOCK | MF | US_STOCK | BOND |
+// EPF | NPS | SA | FD | CRYPTO | INSURANCE | VEHICLE | RE | RD | AIF | PMS |
+// PPF, and `networth_snapshot` takes no arguments. An unknown asset_type
+// returns an empty list rather than an error. Names may still drift with
+// INDmoney releases — resolveToolMap narrows onto the captured catalog, and a
+// missing tool is an alert, not a crash.
 
 export interface ToolMap {
   /** Positions with quantity, cost and value. The expensive call. */
@@ -20,8 +17,8 @@ export interface ToolMap {
 
 export const defaultToolMap: ToolMap = {
   holdings: "networth_holdings",
-  // Seen in the wild as MF | IND_STOCK | INDIAN_STOCK | US_STOCK.
-  holdingsArgs: { asset_type: "INDIAN_STOCK" },
+  // The product watches US-stock portfolios (docs/RESEARCH.md decisions log).
+  holdingsArgs: { asset_type: "US_STOCK" },
   netWorth: "networth_snapshot",
   netWorthArgs: {},
 };

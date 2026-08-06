@@ -113,3 +113,79 @@ test("netWorthDigest is stable across key order and moves with value", () => {
   assert.equal(netWorthDigest(a), netWorthDigest(b));
   assert.notEqual(netWorthDigest(a), netWorthDigest(c));
 });
+
+test("real INDmoney networth_holdings shape normalizes (captured 2026-08-06, fake numbers)", () => {
+  const result = {
+    content: [
+      {
+        type: "text",
+        text: JSON.stringify({
+          holdings: [
+            {
+              investment_code: "120723",
+              investment: "Amazon.com, Inc. Common Stock",
+              asset_type: "US_STOCK",
+              assetclass_l2: "Global Equity",
+              invested_amount: 10000,
+              market_value: 15000,
+              holding_percent: 7.5,
+              total_pnl: 5000,
+              pnl_per: 50,
+              xirr: 0,
+              total_units: 2.5,
+              unit_price: 6000,
+              broker: "2",
+              market_cap: "Mega Cap",
+            },
+            {
+              investment_code: "INDS19182",
+              investment: "Some ETF",
+              asset_type: "STOCK",
+              invested_amount: "unknown",
+              market_value: 2000,
+              total_units: 8,
+              unit_price: 250,
+            },
+          ],
+        }),
+      },
+    ],
+  };
+  const positions = normalizeHoldings(result);
+  assert.equal(positions.length, 2);
+  assert.deepEqual(positions[0], {
+    instrumentId: "120723",
+    symbol: "120723",
+    name: "Amazon.com, Inc. Common Stock",
+    qty: 2.5,
+    avgCost: 4000,
+    mktValue: 15000,
+  });
+  // invested_amount "unknown" degrades to a zero cost basis, not a dropped row.
+  assert.equal(positions[1].avgCost, 0);
+  assert.equal(positions[1].mktValue, 2000);
+});
+
+test("FastMCP structuredContent {result: '<json string>'} unwraps (live shape)", () => {
+  const inner = JSON.stringify({
+    holdings: [
+      {
+        investment_code: "116689",
+        investment: "Invesco NASDAQ 100 ETF",
+        total_units: 4,
+        unit_price: 100,
+        market_value: 400,
+        invested_amount: 300,
+      },
+    ],
+  });
+  const result = {
+    content: [{ type: "text", text: inner }],
+    structuredContent: { result: inner },
+    isError: false,
+  };
+  const positions = normalizeHoldings(result);
+  assert.equal(positions.length, 1);
+  assert.equal(positions[0].instrumentId, "116689");
+  assert.equal(positions[0].avgCost, 75);
+});

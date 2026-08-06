@@ -17,6 +17,8 @@ export interface TickOptions {
   staggerMs?: number;
   diff?: DiffOptions;
   backoff?: Backoff;
+  /** Skip the cheap-probe gate and always pull full holdings. */
+  force?: boolean;
 }
 
 export interface TickResult {
@@ -100,9 +102,11 @@ export async function runPollTick(
     if (staggerMs > 0) await sleep(offsetFor(account.id, staggerMs));
 
     try {
-      const probe = await source.fetchNetWorthHash(account.id);
+      const probe = options.force
+        ? undefined
+        : await source.fetchNetWorthHash(account.id);
       const previous = await storage.latestSnapshot(account.id);
-      if (previous && hashPositions(previous.positions) === probe) {
+      if (previous && probe && hashPositions(previous.positions) === probe) {
         await storage.markPolled(account.id, at);
         backoff?.succeed(account.id);
         result.unchanged.push(account.id);

@@ -25,7 +25,7 @@ import type { FeedEvent, Member } from "./types.js";
 export interface ApiDeps {
   storage: Storage;
   /** One manual poll tick; wired to POST /api/poll. */
-  poll: () => Promise<TickResult>;
+  poll: (opts?: { force?: boolean }) => Promise<TickResult>;
   config: Config;
   mcp: McpDeps;
 }
@@ -218,8 +218,9 @@ export function createApp({ storage, poll, config, mcp }: ApiDeps): Hono<Session
   });
 
   // Manual tick. Also the hook an external cron calls (docs/DEPLOYMENT.md §1).
+  // ?force=1 skips the cheap-probe gate and always pulls full holdings.
   app.post("/api/poll", async (c) => {
-    const result = await poll();
+    const result = await poll({ force: c.req.query("force") === "1" });
     return c.json(result);
   });
 
