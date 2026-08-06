@@ -73,15 +73,19 @@ export function createApp({ storage, poll, config, mcp }: ApiDeps): Hono<Session
     const connection = account
       ? await storage.getOAuthConnection(account.id)
       : undefined;
+    // "account" here means the INDmoney *link*: until an OAuth connection
+    // exists the account row is just provisioning, and the UI should see null
+    // ("not connected"), not the row's lifecycle status.
     return c.json({
       member: toMember(member),
-      account: account
-        ? {
-            connected: connection?.status === "active",
-            status: accountStatus(account, connection?.status),
-            lastPolledAt: account.lastPolledAt,
-          }
-        : null,
+      account:
+        account && connection
+          ? {
+              connected: connection.status === "active",
+              status: accountStatus(account, connection.status),
+              lastPolledAt: account.lastPolledAt,
+            }
+          : null,
     });
   });
 
@@ -151,7 +155,7 @@ export function createApp({ storage, poll, config, mcp }: ApiDeps): Hono<Session
           memberId: a.memberId,
           memberName: memberById.get(a.memberId)?.name ?? "unknown",
           provider: a.provider,
-          status: accountStatus(a, connection?.status),
+          status: connection ? accountStatus(a, connection.status) : "not_connected",
           connected: connection?.status === "active",
           lastPolledAt: a.lastPolledAt,
           nextPollAt: a.status === "active" ? next : null,
