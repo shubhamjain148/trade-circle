@@ -18,6 +18,27 @@ export interface FeedEvent {
   detectedAt: string;
 }
 
+/**
+ * One line of GET /api/members/:id/positions — what someone holds right now,
+ * as opposed to what they did (FeedEvent).
+ *
+ * Weight and identity only. The stored row this is projected from carries qty,
+ * avg cost and market value; none of them may ever appear here. A holdings
+ * panel is the most tempting place in the product to leak a portfolio's size,
+ * which is why the projection is hand-written in src/positions.ts and pinned
+ * by a test.
+ */
+export interface Holding {
+  /** INDmoney's internal key — stable across ticker renames. */
+  instrumentId: string;
+  symbol: string;
+  name: string;
+  /** Position size as % of that friend's portfolio — never rupee amounts. */
+  pctOfPortfolio: number;
+  /** When the last poll wrote this row. */
+  updatedAt: string;
+}
+
 export interface Member {
   id: string;
   name: string;

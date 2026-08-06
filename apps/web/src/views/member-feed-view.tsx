@@ -2,7 +2,9 @@ import { Badge } from "@workspace/ui/components/badge"
 import { cn } from "@workspace/ui/lib/utils"
 
 import { FeedList } from "@/components/feed-list"
+import { HoldingsPanel } from "@/components/holdings-panel"
 import { MemberAvatar } from "@/components/member-avatar"
+import { useSession } from "@/components/session-provider"
 import { useNow } from "@/hooks/use-now"
 import { useFeed } from "@/hooks/use-watcher-data"
 import { ANONYMOUS_NAME, VISIBILITY_COPY } from "@/lib/account"
@@ -18,6 +20,10 @@ interface MemberFeedViewProps {
 export function MemberFeedView({ memberId, member }: MemberFeedViewProps) {
   const { data: events, error, isLoading, reload } = useFeed(memberId)
   const now = useNow()
+  const { state } = useSession()
+  // Your own page shows your own holdings whatever your visibility says: the
+  // dial governs what the group sees, not what the app will tell you about you.
+  const isSelf = state.status === "signed-in" && state.member.id === memberId
 
   const name =
     member?.visibility === "anonymous"
@@ -83,6 +89,16 @@ export function MemberFeedView({ memberId, member }: MemberFeedViewProps) {
           </Badge>
         ) : null}
       </header>
+
+      {/* What they hold now, above what they did. Two questions, two sections:
+          the panel stays compact so the first row of history is still on screen
+          on a phone. */}
+      <HoldingsPanel
+        memberId={memberId}
+        name={name}
+        paused={paused}
+        isSelf={isSelf}
+      />
 
       <FeedList
         events={events}
