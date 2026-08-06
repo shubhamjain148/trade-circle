@@ -79,6 +79,22 @@ export interface AdminMember {
 }
 
 /**
+ * POST /api/poll — what one manual tick did. Mirrors TickResult on the server.
+ * Counts only: the admin control reports a shape of work, not a portfolio.
+ */
+export interface PollResult {
+  at: string
+  polled: string[]
+  /** The cheap probe said nothing had moved. */
+  unchanged: string[]
+  /** Backed off, or not in a state the poller touches. */
+  skipped: string[]
+  errors: { accountId: string; message: string }[]
+  events: number
+  suppressed: number
+}
+
+/**
  * The state of one member's INDmoney link. `connected` and `status` are
  * separate on purpose: a revoked account is still on file (we know its last
  * pass) but is no longer feeding the group.

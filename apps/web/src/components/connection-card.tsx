@@ -71,8 +71,9 @@ export function ConnectionCard({ account, onChanged }: ConnectionCardProps) {
       </p>
 
       {/* A sync line only exists once there's something to sync. "Never
-          synced" under "Not connected" is the same sentence twice. */}
-      {account ? (
+          synced" under "Not connected" is the same sentence twice — and so is
+          "no pass yet" under a status that already says one is running. */}
+      {account && key !== "pending" ? (
         <p className="pt-2 font-mono text-2xs tracking-wide text-muted-foreground tabular-nums">
           {account.lastPolledAt ? (
             <time

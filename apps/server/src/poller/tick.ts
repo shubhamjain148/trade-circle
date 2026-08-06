@@ -19,6 +19,12 @@ export interface TickOptions {
   backoff?: Backoff;
   /** Skip the cheap-probe gate and always pull full holdings. */
   force?: boolean;
+  /**
+   * Restrict the pass to these accounts. Omitted = every active account, which
+   * is what the cron does. The post-connect first fetch passes exactly one id:
+   * a friend who just linked must not drag the whole group into a pass.
+   */
+  accountIds?: string[];
 }
 
 export interface TickResult {
@@ -64,7 +70,8 @@ export class Backoff {
 }
 
 /**
- * One poll pass over every active account: cheap probe, full pull on change,
+ * One poll pass over every active account (or just `options.accountIds` when
+ * the caller names them): cheap probe, full pull on change,
  * per-account diff, then corporate-action suppression across the whole tick
  * (H2 needs all accounts in hand before it can decide anything).
  */
@@ -88,8 +95,9 @@ export async function runPollTick(
     suppressed: 0,
   };
 
+  const only = options.accountIds ? new Set(options.accountIds) : undefined;
   const accounts = (await storage.listAccounts()).filter(
-    (a) => a.status === "active",
+    (a) => a.status === "active" && (!only || only.has(a.id)),
   );
   const candidates: Candidate[] = [];
   const pulled = new Map<string, Position[]>();

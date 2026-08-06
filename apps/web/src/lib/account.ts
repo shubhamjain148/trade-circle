@@ -29,11 +29,16 @@ export const CONNECTION_COPY: Record<ConnectionKey, ConnectionCopy> = {
     tone: "text-muted-foreground",
     action: "Connect INDmoney",
   },
+  /**
+   * Not a queue — a live fetch. The server kicks the first pull off the moment
+   * the OAuth callback lands, so this state is seconds long and resolves on its
+   * own; the card re-reads /api/me until it does.
+   */
   pending: {
-    label: "Connecting",
+    label: "Fetching positions",
     summary:
-      "INDmoney has approved the link. The watcher takes your first snapshot on the next pass.",
-    dot: "bg-muted-foreground/50",
+      "The link is live and the watcher is reading your holdings now. This usually takes under a minute.",
+    dot: "animate-pulse bg-muted-foreground/50 motion-reduce:animate-none",
     tone: "text-muted-foreground",
     action: null,
   },
@@ -87,10 +92,22 @@ export function rosterKey(status: string): ConnectionKey {
     : "none"
 }
 
-/** The two states worth interrupting the feed for. Everything else stays quiet. */
+/**
+ * The states worth interrupting the feed for. Everything else stays quiet —
+ * "pending" in particular, which is a healthy first fetch in progress and
+ * clears itself within a minute. A notice for it would be a nag about nothing.
+ */
 export function needsAttention(account: Account | null): boolean {
   const key = connectionKey(account)
   return key === "none" || key === "needs_reauth" || key === "revoked"
+}
+
+/**
+ * Connected, but no baseline yet: the server is fetching the first snapshot
+ * right now. The one state the session re-reads itself out of.
+ */
+export function isFetchingFirstSnapshot(account: Account | null): boolean {
+  return connectionKey(account) === "pending"
 }
 
 /**

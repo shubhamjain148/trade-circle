@@ -118,7 +118,7 @@ before(async () => {
     suppressed: 0,
   });
   const mcp: McpDeps = { storage, vault: new Vault(config.appSecret), config };
-  app = createApp({ storage, poll, config, mcp });
+  app = createApp({ storage, poll, pollOne: poll, config, mcp });
   cookie = await signIn("m1");
 });
 

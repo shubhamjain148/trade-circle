@@ -48,6 +48,14 @@ After approval INDmoney redirects to `/api/connect/indmoney/callback`, which
 exchanges the code, encrypts the tokens into the vault, and bounces the browser to
 `/#/settings?connected=1`. On failure it bounces to `/#/settings?connect_error=…`.
 
+**The first fetch.** The callback also kicks off a poll of *that one account* before
+it redirects, without waiting on it — `ctx.waitUntil()` on Workers, a detached
+promise under Node. So a new friend's baseline lands in seconds rather than at the
+next cron slot. Until it does, `GET /api/me` reports the account as `pending` and
+Settings says it is fetching your positions; the page re-reads `/api/me` every three
+seconds and flips itself to Connected when `lastPolledAt` is set. If the fetch fails
+the grant still stands, and the next scheduled pass picks the account up.
+
 ## 3. Staying connected
 
 Access tokens are short-lived. The server refreshes them silently — proactively

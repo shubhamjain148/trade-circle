@@ -107,10 +107,13 @@ function ConnectedConfirmation() {
         aria-hidden
         className="mt-[0.5rem] size-1.5 shrink-0 rounded-full bg-pos-up"
       />
+      {/* Deliberately hands off to the card below rather than promising an
+          outcome: the first fetch is already running, and the card is the
+          thing that will say when it landed. */}
       <p className="text-sm leading-relaxed">
         <span className="font-medium text-pos-up">Connected.</span>{" "}
         <span className="text-muted-foreground">
-          You're in the feed from the watcher's next pass.
+          The watcher is fetching your positions now.
         </span>
       </p>
     </div>

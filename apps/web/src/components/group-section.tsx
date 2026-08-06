@@ -9,11 +9,12 @@ import { CONNECTION_COPY, rosterKey } from "@/lib/account"
 import {
   adminInvitePath,
   adminMembersPath,
+  pollPath,
   postJson,
   send,
 } from "@/lib/api"
 import { absoluteTime, relativeTimeCompact } from "@/lib/format"
-import type { AdminMember } from "@/lib/types"
+import type { AdminMember, PollResult } from "@/lib/types"
 
 /**
  * The group roster — admin only, and rendered nowhere else. Until now the only
@@ -117,6 +118,8 @@ export function GroupSection() {
       )}
 
       <AddMember onAdded={roster.reload} />
+
+      <PollNow onPolled={roster.reload} />
 
       {failure ? (
         <p role="alert" className="pt-2.5 text-sm text-destructive">
@@ -304,6 +307,78 @@ function InviteLink({ url, name }: { url: string; name: string }) {
       </p>
     </div>
   )
+}
+
+/**
+ * The manual tick. Normally nobody needs this — the watcher runs on its own
+ * clock and a fresh connect fetches itself — so it reads as an admin's escape
+ * hatch rather than a control panel: one button, one line of outcome.
+ *
+ * "Force" is the same tick without the cheap-probe gate, kept adjacent and
+ * quiet because it costs a full holdings pull for every friend.
+ */
+function PollNow({ onPolled }: { onPolled: () => void }) {
+  const [running, setRunning] = React.useState<"normal" | "force" | null>(null)
+  const [outcome, setOutcome] = React.useState<string | null>(null)
+
+  const run = async (force: boolean) => {
+    if (running) return
+
+    setRunning(force ? "force" : "normal")
+    setOutcome(null)
+    try {
+      setOutcome(summarise(await postJson<PollResult>(pollPath(force), {})))
+      onPolled()
+    } catch {
+      setOutcome("The watcher didn't answer.")
+    } finally {
+      setRunning(null)
+    }
+  }
+
+  return (
+    <div className="flex flex-wrap items-center gap-x-2 gap-y-1 pt-2.5">
+      <Button
+        variant="ghost"
+        size="sm"
+        className="-ml-2.5 text-muted-foreground"
+        disabled={running !== null}
+        onClick={() => void run(false)}
+      >
+        {running === "normal" ? "Polling…" : "Poll now"}
+      </Button>
+      <Button
+        variant="ghost"
+        size="sm"
+        className="font-mono text-3xs tracking-caps text-muted-foreground uppercase"
+        title="Skip the cheap change-probe and pull full holdings for everyone"
+        disabled={running !== null}
+        onClick={() => void run(true)}
+      >
+        {running === "force" ? "Forcing…" : "Force"}
+      </Button>
+
+      {outcome ? (
+        <p
+          aria-live="polite"
+          className="font-mono text-3xs tracking-wide text-muted-foreground tabular-nums"
+        >
+          {outcome}
+        </p>
+      ) : null}
+    </div>
+  )
+}
+
+/** "polled 3 · 2 events · 1 unchanged" — counts, never holdings. */
+function summarise(result: PollResult): string {
+  const parts = [`polled ${result.polled.length}`]
+  if (result.events) parts.push(`${result.events} events`)
+  if (result.unchanged.length) parts.push(`${result.unchanged.length} unchanged`)
+  if (result.skipped.length) parts.push(`${result.skipped.length} skipped`)
+  if (result.errors.length) parts.push(`${result.errors.length} failed`)
+  if (parts.length === 1 && !result.polled.length) return "nothing to poll"
+  return parts.join(" · ")
 }
 
 /** Long enough for a full name; matches the server's cap. */

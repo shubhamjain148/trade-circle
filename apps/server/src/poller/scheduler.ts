@@ -54,8 +54,9 @@ export interface Scheduler {
 }
 
 /**
- * Self-rescheduling timer. Deployments without a long-lived process drive
- * POST /api/poll from an external cron instead (docs/DEPLOYMENT.md §1).
+ * Self-rescheduling timer. Deployments without a long-lived process use their
+ * platform's cron instead — on Workers that is `scheduled()` in worker.ts, not
+ * an HTTP call: POST /api/poll is an admin control now, not a machine hook.
  */
 export function createScheduler(
   onTick: () => Promise<unknown>,

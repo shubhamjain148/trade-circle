@@ -1,6 +1,7 @@
 /* eslint-disable react-refresh/only-export-components */
 import * as React from "react"
 
+import { isFetchingFirstSnapshot } from "@/lib/account"
 import { ApiError, getJson, logoutPath, mePath, send } from "@/lib/api"
 import type { Account, Me, Member } from "@/lib/types"
 
@@ -30,6 +31,9 @@ interface SessionValue {
 }
 
 const SessionContext = React.createContext<SessionValue | undefined>(undefined)
+
+/** How often to re-read /api/me while the first snapshot is still landing. */
+const FIRST_FETCH_POLL_MS = 3000
 
 function toState(me: Me): SessionState {
   return { status: "signed-in", member: me.member, account: me.account }
@@ -84,6 +88,20 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
       cancelled = true
     }
   }, [refresh])
+
+  // The first fetch after a connect runs in the background on the server, so
+  // the only way the card learns it finished is to ask again. Three seconds
+  // against a fetch that usually takes a few: fast enough that "Connected"
+  // feels like it arrived by itself, and it stops the moment it has.
+  const fetchingFirstSnapshot =
+    state.status === "signed-in" && isFetchingFirstSnapshot(state.account)
+
+  React.useEffect(() => {
+    if (!fetchingFirstSnapshot) return
+
+    const timer = window.setInterval(() => void refresh(), FIRST_FETCH_POLL_MS)
+    return () => window.clearInterval(timer)
+  }, [fetchingFirstSnapshot, refresh])
 
   const value = React.useMemo(
     () => ({ state, refresh, setMember, signOut }),

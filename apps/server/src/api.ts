@@ -1,4 +1,4 @@
-import { Hono } from "hono";
+import { Hono, type Context } from "hono";
 import { logger } from "hono/logger";
 import { createAdminApp } from "./admin.js";
 import {
@@ -27,13 +27,25 @@ import type { Member } from "./types.js";
 
 export interface ApiDeps {
   storage: Storage;
-  /** One manual poll tick; wired to POST /api/poll. */
+  /** One full poll tick over every active account; wired to POST /api/poll. */
   poll: (opts?: { force?: boolean }) => Promise<TickResult>;
+  /**
+   * One pass over a single account. Used for the first fetch after a connect,
+   * so a new friend sees their positions in seconds rather than at the next
+   * cron slot. Both entry points provide it; api.ts stays runtime-agnostic.
+   */
+  pollOne: (accountId: string) => Promise<TickResult>;
   config: Config;
   mcp: McpDeps;
 }
 
-export function createApp({ storage, poll, config, mcp }: ApiDeps): Hono<SessionEnv> {
+export function createApp({
+  storage,
+  poll,
+  pollOne,
+  config,
+  mcp,
+}: ApiDeps): Hono<SessionEnv> {
   const app = new Hono<SessionEnv>();
   const cookieOpts = {
     ttlMs: config.sessionTtlMs,
@@ -113,6 +125,18 @@ export function createApp({ storage, poll, config, mcp }: ApiDeps): Hono<Session
   // The callback arrives from INDmoney's redirect; `state` is what binds it to a
   // member, so it deliberately does not require the cookie.
   app.use("/api/connect/indmoney", requireSession(storage));
+
+  // A manual tick reads every friend's holdings, so it is an admin control and
+  // nothing else. Nothing internal comes through here: the Workers cron calls
+  // `scheduled()` directly and the post-connect first fetch calls `pollOne`
+  // in-process — neither makes an HTTP request against this route.
+  app.use("/api/poll", requireSession(storage));
+  // 403 rather than 404, matching /api/admin/*: the caller is known and signed
+  // in, and hiding the route would only make a real bug harder to read.
+  app.use("/api/poll", async (c, next) => {
+    if (c.get("member").role !== "admin") return c.json({ error: "forbidden" }, 403);
+    await next();
+  });
 
   app.get("/api/members", async (c) => {
     const members = await storage.listMembers();
@@ -201,6 +225,32 @@ export function createApp({ storage, poll, config, mcp }: ApiDeps): Hono<Session
     } catch (err) {
       console.warn(`tool catalog capture failed for ${accountId}: ${message(err)}`);
     }
+
+    // First fetch, in the background. Waiting on an MCP round trip here would
+    // hold the browser on INDmoney's redirect for seconds; the settings card
+    // polls /api/me and flips itself the moment the baseline lands. Only this
+    // account — a new friend must not drag the whole group into a pass.
+    background(
+      c,
+      pollOne(accountId).then(
+        (result) => {
+          console.log(
+            JSON.stringify({
+              msg: "first fetch after connect",
+              accountId,
+              polled: result.polled.length,
+              events: result.events,
+              errors: result.errors.map((e) => e.message),
+            }),
+          );
+        },
+        (err) => {
+          // The grant stands either way; the next cron pass picks it up.
+          console.warn(`first fetch failed for ${accountId}: ${message(err)}`);
+        },
+      ),
+    );
+
     return c.redirect(settingsUrl(config, { connected: "1" }), 302);
   });
 
@@ -212,7 +262,8 @@ export function createApp({ storage, poll, config, mcp }: ApiDeps): Hono<Session
     return c.json({ ok: true, ...result });
   });
 
-  // Manual tick. Also the hook an external cron calls (docs/DEPLOYMENT.md §1).
+  // Manual tick, admin only (gated above). A full pass over every account —
+  // the single-account path is the post-connect first fetch, not this.
   // ?force=1 skips the cheap-probe gate and always pulls full holdings.
   app.post("/api/poll", async (c) => {
     const result = await poll({ force: c.req.query("force") === "1" });
@@ -228,18 +279,53 @@ export function createApp({ storage, poll, config, mcp }: ApiDeps): Hono<Session
   return app;
 }
 
+/**
+ * Fire-and-forget work that must outlive the response.
+ *
+ * On Workers a promise the runtime doesn't know about is cancelled the moment
+ * the response is returned, so it has to be handed to `waitUntil`. Under
+ * @hono/node-server there is no ExecutionContext at all and reading
+ * `c.executionCtx` throws — there the process is long-lived and a detached
+ * promise simply runs. One helper, both runtimes, no runtime flag in the deps.
+ *
+ * The promise passed in must already handle its own failures: nothing here
+ * will ever see the rejection.
+ */
+function background(c: Context, work: Promise<unknown>): void {
+  try {
+    c.executionCtx.waitUntil(work);
+  } catch {
+    void work;
+  }
+}
+
 function settingsUrl(config: Config, params: Record<string, string>): string {
   const query = new URLSearchParams(params).toString();
   return `${config.appUrl}/#/settings?${query}`;
 }
 
-/** A live grant that needs re-auth outranks whatever the account row still says. */
+/**
+ * A live grant that needs re-auth outranks whatever the account row still says.
+ *
+ * "pending" is the gap between a grant landing and the first snapshot: the
+ * connect handler kicks that fetch off in the background, so an active account
+ * that has never been polled is mid-first-fetch, not connected-and-idle. The UI
+ * shows "fetching your positions" for exactly this window and flips itself once
+ * `lastPolledAt` is set.
+ */
 function accountStatus(
   account: AccountRow,
   connectionStatus: string | undefined,
 ): string {
   if (connectionStatus === "needs_reauth") return "needs_reauth";
   if (connectionStatus === "revoked") return "revoked";
+  if (
+    connectionStatus === "active" &&
+    account.status === "active" &&
+    !account.lastPolledAt
+  ) {
+    return "pending";
+  }
   return account.status;
 }
 

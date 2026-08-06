@@ -98,6 +98,14 @@ export const connectPath = "/api/connect/indmoney"
  */
 export const connectStartPath = "/api/connect/indmoney/start"
 
+/**
+ * A manual tick over every account. Admin only — it reads every friend's
+ * holdings — and separate from the automatic passes: the cron fires inside the
+ * worker and a connect fetches that one account on its own.
+ */
+export const pollPath = (force = false) =>
+  force ? "/api/poll?force=1" : "/api/poll"
+
 /** Admin only. Everything under here 403s for a plain member. */
 export const adminMembersPath = "/api/admin/members"
 export const adminInvitePath = (memberId: string) =>

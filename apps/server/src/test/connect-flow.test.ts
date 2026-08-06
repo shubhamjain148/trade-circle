@@ -9,7 +9,7 @@ import { createInvite } from "../invite.js";
 import type { McpDeps } from "../mcp/oauth.js";
 import { McpPortfolioSource } from "../mcp/source.js";
 import { SnapshotEchoSource } from "../poller/source.js";
-import { Backoff, runPollTick } from "../poller/tick.js";
+import { Backoff, runPollTick, type TickResult } from "../poller/tick.js";
 import { createStorage, type Storage } from "../storage/index.js";
 import { startFakeMcpServer, type FakeMcpServer } from "./fake-mcp-server.js";
 
@@ -28,6 +28,40 @@ let cookie = "";
 
 async function poll() {
   return runPollTick(storage, source, { staggerMs: 0, backoff: new Backoff() });
+}
+
+/**
+ * The connect handler fires the first fetch and forgets it, which is exactly
+ * what a test cannot observe. So the injected `pollOne` hands back a promise
+ * gated on a barrier the test releases: the window where the account is
+ * connected but unpolled — the one the UI calls "fetching your positions" —
+ * is held open for as long as the assertions need it.
+ */
+interface FirstFetch {
+  accountId: string;
+  release: () => void;
+  done: Promise<TickResult>;
+}
+
+const firstFetches: FirstFetch[] = [];
+
+function pollOne(accountId: string): Promise<TickResult> {
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const done = gate.then(() =>
+    runPollTick(storage, source, { staggerMs: 0, accountIds: [accountId] }),
+  );
+  firstFetches.push({ accountId, release, done });
+  return done;
+}
+
+/** The first fetch kicked off by the most recent connect callback. */
+function lastFirstFetch(): FirstFetch {
+  const fetched = firstFetches.at(-1);
+  assert.ok(fetched, "the callback kicked off a first fetch");
+  return fetched;
 }
 
 before(async () => {
@@ -53,7 +87,7 @@ before(async () => {
     fallback: new SnapshotEchoSource(storage),
     holdingsTtlMs: 0,
   });
-  app = createApp({ storage, poll, config, mcp });
+  app = createApp({ storage, poll, pollOne, config, mcp });
 });
 
 after(async () => {
@@ -165,6 +199,45 @@ describe("connect flow", () => {
     ]);
   });
 
+  test("the callback reports 'pending' until the first fetch lands", async () => {
+    // The redirect did not wait on the fetch — it is still gated here.
+    assert.equal(lastFirstFetch().accountId, "a-m1");
+    assert.equal((await storage.getAccount("a-m1"))!.lastPolledAt, null);
+
+    const me = (await (
+      await app.request("/api/me", { headers: { cookie } })
+    ).json()) as { account: { connected: boolean; status: string; lastPolledAt: string | null } };
+    // Connected, but not yet synced: the UI shows "fetching your positions".
+    assert.equal(me.account.status, "pending");
+    assert.equal(me.account.connected, true);
+    assert.equal(me.account.lastPolledAt, null);
+
+    const accounts = (await (
+      await app.request("/api/accounts", { headers: { cookie } })
+    ).json()) as { id: string; status: string }[];
+    assert.equal(accounts.find((a) => a.id === "a-m1")?.status, "pending");
+  });
+
+  test("connecting kicks off a first fetch, unprompted", async () => {
+    const first = lastFirstFetch();
+    first.release();
+    const result = await first.done;
+
+    assert.deepEqual(result.polled, ["a-m1"]);
+    assert.equal(result.errors.length, 0);
+    assert.equal(result.events, 2);
+    assert.ok(fake.toolCalls.includes("networth_holdings"));
+
+    const positions = await storage.getCurrentPositions("a-m1");
+    assert.deepEqual(positions.map((p) => p.symbol).sort(), ["DABUR", "EMMBI"]);
+    const dabur = positions.find((p) => p.symbol === "DABUR")!;
+    assert.equal(dabur.qty, 40);
+    assert.equal(Math.round(dabur.mktValue), Math.round(40 * 548.2));
+
+    assert.ok((await storage.getAccount("a-m1"))!.lastPolledAt);
+    assert.equal((await storage.listFeedEvents({ accountId: "a-m1" })).length, 2);
+  });
+
   test("/api/me and /api/accounts report the live connection", async () => {
     const me = (await (
       await app.request("/api/me", { headers: { cookie } })
@@ -185,23 +258,8 @@ describe("connect flow", () => {
 });
 
 describe("polling through McpPortfolioSource", () => {
-  test("a tick pulls positions over MCP and writes feed events", async () => {
-    const result = await poll();
-    assert.deepEqual(result.polled, ["a-m1"]);
-    assert.equal(result.errors.length, 0);
-    assert.equal(result.events, 2);
-
-    const positions = await storage.getCurrentPositions("a-m1");
-    assert.deepEqual(
-      positions.map((p) => p.symbol).sort(),
-      ["DABUR", "EMMBI"],
-    );
-    const dabur = positions.find((p) => p.symbol === "DABUR")!;
-    assert.equal(dabur.qty, 40);
-    assert.equal(Math.round(dabur.mktValue), Math.round(40 * 548.2));
-    assert.ok(fake.toolCalls.includes("networth_holdings"));
-  });
-
+  // The first pull over MCP is the connect-time fetch above; a scheduled tick
+  // arrives at an account that already has a baseline.
   test("an unchanged net-worth probe skips the expensive call", async () => {
     const before = fake.toolCalls.filter((t) => t === "networth_holdings").length;
     const result = await poll();
@@ -337,5 +395,96 @@ describe("visibility", () => {
       body: JSON.stringify({ visibility: "named" }),
     });
     assert.equal(back.status, 200);
+  });
+});
+
+/**
+ * The scope of the connect-time fetch. Left as a full sweep it would mean every
+ * friend gets pulled every time anyone links their account — INDmoney rate-limits
+ * per user, and a new joiner must not spend everyone else's budget.
+ */
+describe("the first fetch touches one account only", () => {
+  test("connecting a second member leaves the first account's last pass alone", async () => {
+    // The revocation tests above left a-m1 revoked; put it back to active so a
+    // full sweep genuinely would have polled it, and the filter is what didn't.
+    await storage.setAccountStatus("a-m1", "active");
+    const before = (await storage.getAccount("a-m1"))!.lastPolledAt;
+    assert.ok(before, "a-m1 has a baseline to protect");
+
+    await storage.upsertMember({
+      id: "m2",
+      name: "Priya",
+      visibility: "named",
+      role: "member",
+      createdAt: new Date().toISOString(),
+    });
+    const invite = await createInvite(storage, "m2", APP_URL);
+    const token = new URL(invite.replace("/#/", "/")).searchParams.get("token")!;
+    const join = await app.request("/api/auth/session", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ inviteToken: token }),
+    });
+    const cookie2 = (join.headers.get("set-cookie") ?? "").split(";")[0];
+
+    const startRes = await app.request("/api/connect/indmoney/start?json=1", {
+      headers: { cookie: cookie2 },
+    });
+    const { authorizationUrl } = (await startRes.json()) as { authorizationUrl: string };
+    const authRes = await fetch(authorizationUrl, { redirect: "manual" });
+    const back = new URL(authRes.headers.get("location")!);
+    const cbRes = await app.request(`/api/connect/indmoney/callback${back.search}`, {
+      headers: { cookie: cookie2 },
+    });
+    assert.equal(cbRes.status, 302);
+
+    const first = lastFirstFetch();
+    assert.equal(first.accountId, "a-m2");
+    first.release();
+    const result = await first.done;
+
+    assert.deepEqual(result.polled, ["a-m2"], "only the new account was pulled");
+    assert.ok((await storage.getAccount("a-m2"))!.lastPolledAt);
+    assert.equal(
+      (await storage.getAccount("a-m1"))!.lastPolledAt,
+      before,
+      "the other friend's account was not touched",
+    );
+  });
+});
+
+describe("POST /api/poll is an admin control", () => {
+  test("no session is 401, a plain member is 403, an admin gets the tick", async () => {
+    const anon = await app.request("/api/poll", { method: "POST" });
+    assert.equal(anon.status, 401);
+
+    // m2 joined as a plain member in the describe above; m1 is the admin.
+    const invite = await createInvite(storage, "m2", APP_URL);
+    const token = new URL(invite.replace("/#/", "/")).searchParams.get("token")!;
+    const join = await app.request("/api/auth/session", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ inviteToken: token }),
+    });
+    const memberCookie = (join.headers.get("set-cookie") ?? "").split(";")[0];
+
+    const forbidden = await app.request("/api/poll", {
+      method: "POST",
+      headers: { cookie: memberCookie },
+    });
+    assert.equal(forbidden.status, 403);
+    assert.deepEqual(await forbidden.json(), { error: "forbidden" });
+
+    const allowed = await app.request("/api/poll", {
+      method: "POST",
+      headers: { cookie },
+    });
+    assert.equal(allowed.status, 200);
+    const result = (await allowed.json()) as TickResult;
+    // A full sweep, unlike the connect-time fetch: every active account.
+    assert.deepEqual(
+      [...result.polled, ...result.unchanged].sort(),
+      ["a-m1", "a-m2"],
+    );
   });
 });

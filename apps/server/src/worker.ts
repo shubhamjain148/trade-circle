@@ -99,7 +99,18 @@ function wire(env: Env): Wiring {
   const poll = (opts?: { force?: boolean }) =>
     runPollTick(storage, source, { staggerMs: STAGGER_MS, backoff, ...opts });
 
-  const wiring: Wiring = { app: createApp({ storage, poll, config, mcp }), storage, poll };
+  // One account, right now: the first fetch after a connect, handed to
+  // ctx.waitUntil by the callback handler. No stagger (there is nothing to
+  // spread, and the redirect is already gone) and no backoff (a fresh grant
+  // has no failure history to honour).
+  const pollOne = (accountId: string) =>
+    runPollTick(storage, source, { staggerMs: 0, accountIds: [accountId] });
+
+  const wiring: Wiring = {
+    app: createApp({ storage, poll, pollOne, config, mcp }),
+    storage,
+    poll,
+  };
   wiringCache.set(env, wiring);
   return wiring;
 }

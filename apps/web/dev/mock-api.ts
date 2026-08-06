@@ -178,14 +178,26 @@ const FEED = [
   },
 ]
 
+/**
+ * How long the mock pretends the first fetch takes. The real server kicks it
+ * off in the background the moment the OAuth callback lands, so "pending" is a
+ * few seconds wide. Slower than the real thing on purpose: the state it stands
+ * in for is over almost before you can look at it, and this file exists to be
+ * looked at.
+ */
+const FIRST_FETCH_MS = 15_000
+
 /** Per-scenario session, so logging out in one tab doesn't wedge the next run. */
 interface MockState {
   scenario: Scenario
   signedIn: boolean
   account: MockAccount | null
+  /** When a pending account's first snapshot lands. Absent = never pending. */
+  firstSnapshotAt?: number
 }
 
 function stateFor(scenario: Scenario): MockState {
+  const account = ACCOUNTS[scenario]
   return {
     scenario,
     signedIn: !(
@@ -193,8 +205,28 @@ function stateFor(scenario: Scenario): MockState {
       scenario === "join_used" ||
       scenario === "join_invalid"
     ),
-    account: ACCOUNTS[scenario],
+    account,
+    firstSnapshotAt:
+      account?.status === "pending" ? Date.now() + FIRST_FETCH_MS : undefined,
   }
+}
+
+/**
+ * The server-side half of the flip, faked: an account stays "pending" until its
+ * first snapshot lands, then reads as connected and synced. Applied on read
+ * because that is exactly what the client is doing — re-asking /api/me until
+ * the answer changes.
+ */
+function settleFirstSnapshot(state: MockState): void {
+  if (state.account?.status !== "pending") return
+  if (!state.firstSnapshotAt || Date.now() < state.firstSnapshotAt) return
+
+  state.account = {
+    connected: true,
+    status: "active",
+    lastPolledAt: new Date().toISOString(),
+  }
+  state.firstSnapshotAt = undefined
 }
 
 function json(res: ServerResponse, status: number, body: unknown) {
@@ -260,6 +292,7 @@ export function devMockApi(): Plugin | null {
             return json(res, 503, { error: "watcher_unreachable" })
           }
           if (!state.signedIn) return json(res, 401, { error: "no_session" })
+          settleFirstSnapshot(state)
           return json(res, 200, { member: ME, account: state.account })
         }
 
@@ -288,13 +321,19 @@ export function devMockApi(): Plugin | null {
         }
 
         if (path === "/api/connect/indmoney/start" && method === "GET") {
-          // Stands in for the whole INDmoney round trip, callback included.
-          return redirect(
-            res,
-            state.scenario === "connect_error"
-              ? "/#/settings?connect_error=access_denied"
-              : "/#/settings?connected=1"
-          )
+          // Stands in for the whole INDmoney round trip, callback included —
+          // which now includes the server kicking off the first fetch, so the
+          // account comes back connected but not yet synced.
+          if (state.scenario === "connect_error") {
+            return redirect(res, "/#/settings?connect_error=access_denied")
+          }
+          state.account = {
+            connected: true,
+            status: "pending",
+            lastPolledAt: null,
+          }
+          state.firstSnapshotAt = Date.now() + FIRST_FETCH_MS
+          return redirect(res, "/#/settings?connected=1")
         }
 
         if (path === "/api/connect/indmoney" && method === "DELETE") {
@@ -306,6 +345,27 @@ export function devMockApi(): Plugin | null {
         if (!state.signedIn) return json(res, 401, { error: "no_session" })
 
         if (path === "/api/members") return json(res, 200, MEMBERS)
+
+        // The admin's manual tick. Gated the same way the server gates it.
+        if (path === "/api/poll" && method === "POST") {
+          if (ME.role !== "admin") return json(res, 403, { error: "forbidden" })
+
+          const now = new Date().toISOString()
+          const forced = url.searchParams.get("force") === "1"
+          for (const row of ROSTER) {
+            if (row.status === "active") row.lastPolledAt = now
+          }
+          const active = ROSTER.filter((m) => m.status === "active").map((m) => m.id)
+          return json(res, 200, {
+            at: now,
+            polled: forced ? active : active.slice(0, 1),
+            unchanged: forced ? [] : active.slice(1),
+            skipped: [],
+            errors: [],
+            events: forced ? 3 : 1,
+            suppressed: 0,
+          })
+        }
 
         // Admin roster + invites. ME is the admin in this mock, so the Group
         // section is always reachable; flip ME's role to "member" to see the

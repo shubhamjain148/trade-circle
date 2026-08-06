@@ -302,7 +302,11 @@ Everything below ran locally against `wrangler dev` with miniflare's local D1.
 - **Admin routes over D1.** `/api/admin/members` returned the roster with invite status, exercising
   `listInvites`.
 - **Poller.** `POST /api/poll` and `GET /__scheduled?cron=…` both ran a full tick and logged one
-  structured line each.
+  structured line each. `POST /api/poll` has since been gated behind an admin session (401 without
+  a cookie, 403 for a plain member), so a manual tick now means signing in as an admin and using
+  "Poll now" in Settings → Group, or sending the session cookie with the curl. Nothing automatic
+  goes through it: cron calls `scheduled()` directly, and the post-connect first fetch calls the
+  poller in-process.
 - **Vault on workerd.** The real `Vault` class, loaded into a probe Worker: v2 envelope, round-trip,
   JSON round-trip, wrong-secret rejection, the v1 reconnect message, `hashToken` and `randomToken`.
 - **Full OAuth + MCP loop on Workers.** Against the repo's own `fake-mcp-server.ts`: discovery →

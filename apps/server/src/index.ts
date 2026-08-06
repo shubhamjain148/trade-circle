@@ -21,7 +21,12 @@ const backoff = new Backoff();
 const poll = (opts?: { force?: boolean }) =>
   runPollTick(storage, source, { staggerMs: 30_000, backoff, ...opts });
 
-const app = createApp({ storage, poll, config, mcp });
+// One account, right now: the first fetch after a connect. No stagger (there is
+// nothing to spread) and no backoff (a fresh grant has no failure history).
+const pollOne = (accountId: string) =>
+  runPollTick(storage, source, { staggerMs: 0, accountIds: [accountId] });
+
+const app = createApp({ storage, poll, pollOne, config, mcp });
 
 const scheduler = createScheduler(poll);
 if (process.env.DISABLE_SCHEDULER !== "1") scheduler.start();
