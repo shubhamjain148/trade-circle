@@ -89,6 +89,20 @@ export function createApp({ storage, poll, config, mcp }: ApiDeps): Hono<Session
     });
   });
 
+  // Visibility is the member's own dial (docs/RESEARCH.md decisions): named,
+  // anonymous, or paused. Applies from the next feed read; history unchanged.
+  app.patch("/api/me/visibility", async (c) => {
+    const member = await currentMember(c, storage);
+    if (!member) return c.json({ error: "unauthorized" }, 401);
+    const body = await c.req.json().catch(() => ({}) as Record<string, unknown>);
+    const visibility = body.visibility;
+    if (visibility !== "named" && visibility !== "anonymous" && visibility !== "paused") {
+      return c.json({ error: "invalid_visibility" }, 400);
+    }
+    await storage.upsertMember({ ...member, visibility });
+    return c.json({ member: toMember({ ...member, visibility }) });
+  });
+
   app.use("/api/members", requireSession(storage));
   app.use("/api/feed", requireSession(storage));
   app.use("/api/accounts", requireSession(storage));

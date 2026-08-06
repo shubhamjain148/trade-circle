@@ -300,3 +300,41 @@ describe("revocation", () => {
     assert.equal((await app.request("/api/me", { headers: { cookie } })).status, 401);
   });
 });
+
+describe("visibility", () => {
+  test("a member can switch their own visibility", async () => {
+    // The logout test above invalidated the shared cookie; start a new session.
+    const url = await createInvite(storage, "m1", APP_URL);
+    const token = new URL(url.replace("/#/", "/")).searchParams.get("token")!;
+    const join = await app.request("/api/auth/session", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ inviteToken: token }),
+    });
+    cookie = (join.headers.get("set-cookie") ?? "").split(";")[0];
+
+    const res = await app.request("/api/me/visibility", {
+      method: "PATCH",
+      headers: { cookie, "content-type": "application/json" },
+      body: JSON.stringify({ visibility: "anonymous" }),
+    });
+    assert.equal(res.status, 200);
+    const body = (await res.json()) as { member: { visibility: string } };
+    assert.equal(body.member.visibility, "anonymous");
+
+    const bad = await app.request("/api/me/visibility", {
+      method: "PATCH",
+      headers: { cookie, "content-type": "application/json" },
+      body: JSON.stringify({ visibility: "invisible" }),
+    });
+    assert.equal(bad.status, 400);
+
+    // Restore for later tests.
+    const back = await app.request("/api/me/visibility", {
+      method: "PATCH",
+      headers: { cookie, "content-type": "application/json" },
+      body: JSON.stringify({ visibility: "named" }),
+    });
+    assert.equal(back.status, 200);
+  });
+});
