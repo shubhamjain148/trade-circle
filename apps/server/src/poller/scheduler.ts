@@ -40,6 +40,26 @@ export function nextRunAt(from: Date): Date {
   throw new Error("no run slot found within 8 days");
 }
 
+/** Cron granularity is coarse; accept a slot only within this much of it. */
+const SLOT_TOLERANCE_MIN = 5;
+
+/**
+ * True when `at` lands on (or within a few minutes of) one of the slots above.
+ *
+ * This is what the Workers entry point checks before running a cron pass: the
+ * `triggers.crons` list in wrangler.jsonc and `runMinutesUtc()` say the same
+ * thing twice, cron is coarse, and a trigger list is easy to edit without
+ * noticing. It lives here rather than in worker.ts so the agreement can be
+ * tested under plain Node — worker.ts now pulls in the Durable Object class,
+ * and `cloudflare:workers` does not exist outside workerd.
+ */
+export function isScheduledSlot(at: Date): boolean {
+  const weekday = at.getUTCDay();
+  if (weekday === 0 || weekday === 6) return false;
+  const minute = at.getUTCHours() * 60 + at.getUTCMinutes();
+  return runMinutesUtc().some((slot) => Math.abs(slot - minute) <= SLOT_TOLERANCE_MIN);
+}
+
 export function isMarketWindow(at: Date): boolean {
   const weekday = at.getUTCDay();
   if (weekday === 0 || weekday === 6) return false;

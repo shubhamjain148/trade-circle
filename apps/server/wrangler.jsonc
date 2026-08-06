@@ -21,6 +21,20 @@
     }
   ],
 
+  // One room for the whole group — chat fan-out and typing signals, nothing
+  // durable (D1 remains the source of truth; see src/room.ts). The class holds
+  // WebSockets open with the Hibernation API, so an idle evening of connected
+  // tabs bills no duration at all.
+  "durable_objects": {
+    "bindings": [{ "name": "CHAT_ROOM", "class_name": "ChatRoom" }]
+  },
+
+  // `new_sqlite_classes`, not `new_classes`: the key-value backend is Paid-plan
+  // only, and SQLite-backed objects are the only kind the free plan can create.
+  // The room stores nothing in it — this is about which backend the namespace
+  // is created against, and it is the one that exists for us.
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["ChatRoom"] }],
+
   // The Vite build output of apps/web. `run_worker_first` keeps /api/* on the
   // Worker; everything else is served straight from the asset store, and an
   // unknown path renders index.html so the hash router can take over.

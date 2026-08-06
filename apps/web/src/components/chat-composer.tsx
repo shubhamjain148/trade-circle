@@ -6,6 +6,11 @@ import { MAX_MESSAGE_LENGTH } from "@/hooks/use-chat"
 
 interface ChatComposerProps {
   onSend: (body: string) => void
+  /**
+   * Fired on input. Throttling lives in useChat, not here — the composer's job
+   * is to say that a key was pressed, not to have an opinion about how often.
+   */
+  onTyping?: () => void
 }
 
 /** Roughly five lines before the box stops growing and starts scrolling. */
@@ -21,7 +26,7 @@ const COUNTER_FROM = MAX_MESSAGE_LENGTH - 200
  * sends, Shift+Enter breaks the line — this is a chat, and reaching for a
  * button to say "lol" is a tax.
  */
-export function ChatComposer({ onSend }: ChatComposerProps) {
+export function ChatComposer({ onSend, onTyping }: ChatComposerProps) {
   const [value, setValue] = React.useState("")
   const field = React.useRef<HTMLTextAreaElement>(null)
 
@@ -58,7 +63,11 @@ export function ChatComposer({ onSend }: ChatComposerProps) {
           rows={1}
           value={value}
           maxLength={MAX_MESSAGE_LENGTH}
-          onChange={(event) => setValue(event.target.value)}
+          onChange={(event) => {
+            setValue(event.target.value)
+            // Clearing the box is not typing; neither is deleting the last char.
+            if (event.target.value.trim()) onTyping?.()
+          }}
           onKeyDown={(event) => {
             if (event.key !== "Enter" || event.shiftKey) return
             // IME composition: Enter is picking a candidate, not sending.

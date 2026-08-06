@@ -1,13 +1,17 @@
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
-import { runMinutesUtc } from "./poller/scheduler.js";
-import { isScheduledSlot } from "./worker.js";
+import { isScheduledSlot, runMinutesUtc } from "./poller/scheduler.js";
 
 /**
  * The cron triggers in wrangler.jsonc and `isScheduledSlot` say the same thing
  * twice, on purpose: cron is coarse and a trigger list is easy to edit without
  * noticing. These tests pin the agreement, and pin it to the same source the
  * Node scheduler uses (poller/scheduler.ts), so the two runtimes cannot drift.
+ *
+ * The predicate lives in poller/scheduler.ts rather than worker.ts because
+ * worker.ts now exports the Durable Object class, and importing it under plain
+ * Node would ask for `cloudflare:workers`. What worker.ts's `scheduled()` calls
+ * is exactly this function, so the guarantee is unchanged.
  */
 
 // Thursday and Saturday in UTC.

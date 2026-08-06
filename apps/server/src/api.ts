@@ -1,6 +1,7 @@
-import { Hono, type Context } from "hono";
+import { Hono } from "hono";
 import { logger } from "hono/logger";
 import { createAdminApp } from "./admin.js";
+import { background } from "./background.js";
 import {
   clearSession,
   currentMember,
@@ -11,6 +12,7 @@ import {
 import { hashToken } from "./auth/vault.js";
 import { createChatApp } from "./chat.js";
 import type { Config } from "./config.js";
+import { createDeviceApp } from "./device.js";
 import type { AccountRow, MemberRow } from "./domain.js";
 import { toFeedEvents } from "./feed.js";
 import { captureToolCatalog } from "./mcp/client.js";
@@ -21,7 +23,9 @@ import {
   type McpDeps,
 } from "./mcp/oauth.js";
 import { nextRunAt } from "./poller/scheduler.js";
+import { createPositionsApp } from "./positions.js";
 import type { TickResult } from "./poller/tick.js";
+import type { Room } from "./room.js";
 import type { Storage } from "./storage/index.js";
 import type { Member } from "./types.js";
 
@@ -37,6 +41,12 @@ export interface ApiDeps {
   pollOne: (accountId: string) => Promise<TickResult>;
   config: Config;
   mcp: McpDeps;
+  /**
+   * Live delivery, when the runtime has one. Absent on Node (and in tests), and
+   * absence is a supported state, not a degraded one: /api/chat/ws answers 501
+   * and every client falls back to the poll loop it never stopped running.
+   */
+  room?: Room;
 }
 
 export function createApp({
@@ -45,6 +55,7 @@ export function createApp({
   pollOne,
   config,
   mcp,
+  room,
 }: ApiDeps): Hono<SessionEnv> {
   const app = new Hono<SessionEnv>();
   const cookieOpts = {
@@ -55,6 +66,12 @@ export function createApp({
   app.use(logger());
 
   app.get("/api/health", (c) => c.json({ ok: true }));
+
+  // "Link another device" — minting, plus the device-link half of the handshake
+  // below. Mounted here rather than beside the other sub-apps because it
+  // extends /api/auth/session: it looks first, falls through to the invite
+  // handler when the token isn't one of its own. See src/device.ts.
+  app.route("/", createDeviceApp({ storage, config }));
 
   // Invite → session. The token is single-use and only its hash was ever stored.
   app.post("/api/auth/session", async (c) => {
@@ -271,32 +288,15 @@ export function createApp({
   });
 
   // Group chat + activity timeline. Session-gated inside; see src/chat.ts.
-  app.route("/", createChatApp({ storage }));
+  app.route("/", createChatApp({ storage, room }));
+
+  // One member's current holdings. Session-gated inside; see src/positions.ts.
+  app.route("/", createPositionsApp({ storage }));
 
   // Roster + invites. Session- and role-gated inside; see src/admin.ts.
   app.route("/", createAdminApp({ storage, config }));
 
   return app;
-}
-
-/**
- * Fire-and-forget work that must outlive the response.
- *
- * On Workers a promise the runtime doesn't know about is cancelled the moment
- * the response is returned, so it has to be handed to `waitUntil`. Under
- * @hono/node-server there is no ExecutionContext at all and reading
- * `c.executionCtx` throws — there the process is long-lived and a detached
- * promise simply runs. One helper, both runtimes, no runtime flag in the deps.
- *
- * The promise passed in must already handle its own failures: nothing here
- * will ever see the rejection.
- */
-function background(c: Context, work: Promise<unknown>): void {
-  try {
-    c.executionCtx.waitUntil(work);
-  } catch {
-    void work;
-  }
 }
 
 function settingsUrl(config: Config, params: Record<string, string>): string {

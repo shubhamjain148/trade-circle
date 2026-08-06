@@ -1,7 +1,9 @@
 import { randomUUID } from "node:crypto";
 import { Hono } from "hono";
 import { requireSession, type SessionEnv } from "./auth/session.js";
+import { background } from "./background.js";
 import { toFeedEvents } from "./feed.js";
+import type { Room } from "./room.js";
 import type { Storage } from "./storage/index.js";
 import type { ChatPage, TimelineItem } from "./types.js";
 
@@ -13,6 +15,8 @@ const PAGE_LIMIT = 200;
 
 export interface ChatDeps {
   storage: Storage;
+  /** Live delivery, where the runtime has one. See src/room.ts. */
+  room?: Room;
 }
 
 /**
@@ -23,10 +27,31 @@ export interface ChatDeps {
  * Mounted as its own Hono app so api.ts stays one import and one line: the
  * session gate below applies to these routes only.
  */
-export function createChatApp({ storage }: ChatDeps): Hono<SessionEnv> {
+export function createChatApp({ storage, room }: ChatDeps): Hono<SessionEnv> {
   const app = new Hono<SessionEnv>();
 
   app.use("/api/chat", requireSession(storage));
+  // Hono's `use` with a literal path matches that path exactly, so the socket
+  // needs its own line — and needs it before the handler below reads `member`.
+  app.use("/api/chat/ws", requireSession(storage));
+
+  /**
+   * The live channel. Session is validated here, in the Worker, against D1 —
+   * the room itself has no idea what a cookie is, and by the time the stub sees
+   * this request the only claim left is a header the Worker wrote.
+   *
+   * 501 on Node, and that is a real answer rather than a failure: the client's
+   * poll loop never stopped, so a runtime without a room is a runtime where
+   * chat is four seconds behind instead of instant.
+   */
+  app.get("/api/chat/ws", async (c) => {
+    if (!room) return c.json({ error: "websocket_unsupported" }, 501);
+    if (c.req.header("upgrade")?.toLowerCase() !== "websocket") {
+      return c.json({ error: "upgrade_required" }, 426);
+    }
+    const member = c.get("member");
+    return room.upgrade(c.req.raw, { id: member.id, name: member.name });
+  });
 
   // Oldest → newest, unlike /api/feed: this reads as a conversation, and the
   // composer sits at the bottom of it.
@@ -93,19 +118,23 @@ export function createChatApp({ storage }: ChatDeps): Hono<SessionEnv> {
     };
     await storage.insertMessage(row);
 
+    const item: TimelineItem = {
+      kind: "message",
+      id: row.id,
+      memberId: row.memberId,
+      authorName: member.name,
+      body: row.body,
+      createdAt: row.createdAt,
+    };
+
+    // After the write, never instead of it: D1 has the message whether or not
+    // anyone is listening. Off the response path because the author is already
+    // looking at their own optimistic row — the fan-out is for everybody else.
+    if (room) background(c, room.broadcast([item]));
+
     // Echo the stored row: the client posted optimistically and needs the real
     // id and timestamp to reconcile against the next poll.
-    return c.json(
-      {
-        kind: "message",
-        id: row.id,
-        memberId: row.memberId,
-        authorName: member.name,
-        body: row.body,
-        createdAt: row.createdAt,
-      } satisfies TimelineItem,
-      201,
-    );
+    return c.json(item, 201);
   });
 
   return app;

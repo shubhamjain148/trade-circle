@@ -2,6 +2,7 @@ import * as React from "react"
 
 import { ChatComposer } from "@/components/chat-composer"
 import { ChatTimeline } from "@/components/chat-timeline"
+import { ChatTypingLine } from "@/components/chat-typing-line"
 import { useSession } from "@/components/session-provider"
 import { useChat } from "@/hooks/use-chat"
 import { useNow } from "@/hooks/use-now"
@@ -26,8 +27,18 @@ interface GroupChatViewProps {
  */
 export function GroupChatView({ members, member }: GroupChatViewProps) {
   const { refresh } = useSession()
-  const { items, isLoading, error, updatedAt, send, retry, reload } =
-    useChat(member)
+  const {
+    items,
+    isLoading,
+    error,
+    updatedAt,
+    live,
+    typing,
+    send,
+    retry,
+    reload,
+    notifyTyping,
+  } = useChat(member)
   const now = useNow()
 
   const watched = members?.filter((m) => m.visibility !== "paused").length
@@ -58,9 +69,13 @@ export function GroupChatView({ members, member }: GroupChatViewProps) {
                 items.length > 0 ? `${moves} moves` : null,
                 error
                   ? "sync failed"
-                  : updatedAt
-                    ? `synced ${relativeTimeCompact(new Date(updatedAt).toISOString(), now)}`
-                    : null,
+                  : // A socket that is up makes "synced 40s ago" a lie about
+                    // liveness rather than a fact about the last request.
+                    live
+                    ? "live"
+                    : updatedAt
+                      ? `synced ${relativeTimeCompact(new Date(updatedAt).toISOString(), now)}`
+                      : null,
               ]
                 .filter(Boolean)
                 .join(" · ")}
@@ -76,7 +91,12 @@ export function GroupChatView({ members, member }: GroupChatViewProps) {
         onRetryMessage={retry}
       />
 
-      <ChatComposer onSend={send} />
+      {/* One band, so the reserved typing line rides directly on the
+          composer's rule instead of opening a second gap in the column. */}
+      <div className="flex shrink-0 flex-col">
+        <ChatTypingLine typing={typing} />
+        <ChatComposer onSend={send} onTyping={notifyTyping} />
+      </div>
     </div>
   )
 }

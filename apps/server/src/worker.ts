@@ -3,10 +3,21 @@ import { Vault } from "./auth/vault.js";
 import type { Config } from "./config.js";
 import { seedStorage } from "./dev-seed.js";
 import { McpPortfolioSource } from "./mcp/source.js";
-import { runMinutesUtc } from "./poller/scheduler.js";
+import { isScheduledSlot } from "./poller/scheduler.js";
 import { SnapshotEchoSource } from "./poller/source.js";
 import { Backoff, runPollTick } from "./poller/tick.js";
+import type { ChatRoom } from "./room-object.js";
+import { ROOM_NAME, type Room, type RoomMember } from "./room.js";
 import { D1Storage } from "./storage/d1.js";
+import type { TimelineItem } from "./types.js";
+
+/**
+ * The Durable Object class has to be exported from the entry module for the
+ * `durable_objects` binding in wrangler.jsonc to resolve. It is the only thing
+ * in this codebase that imports `cloudflare:workers`, which is why it lives in
+ * its own file and why src/index.ts (Node) never sees it.
+ */
+export { ChatRoom } from "./room-object.js";
 
 /**
  * Cloudflare Workers entry point. src/index.ts remains the Node entry point and
@@ -28,6 +39,8 @@ export interface Env {
   DB: D1Database;
   /** Workers Assets. Only reached if a non-/api path somehow gets here. */
   ASSETS: Fetcher;
+  /** The single group room — live chat delivery and typing. See src/room.ts. */
+  CHAT_ROOM: DurableObjectNamespace<ChatRoom>;
   /** Keys the token vault. `wrangler secret put APP_SECRET`. */
   APP_SECRET: string;
   APP_URL?: string;
@@ -54,9 +67,6 @@ const wiringCache = new WeakMap<Env, Wiring>();
 
 /** Modest on purpose: sleeping is wall time, but the cron budget is not infinite. */
 const STAGGER_MS = 5_000;
-
-/** Cron granularity is coarse; accept a slot only within this much of it. */
-const SLOT_TOLERANCE_MIN = 5;
 
 function wire(env: Env): Wiring {
   const cached = wiringCache.get(env);
@@ -96,18 +106,29 @@ function wire(env: Env): Wiring {
   // account's own rate limit is the real backstop.
   const backoff = new Backoff();
 
+  const room = new DurableRoom(env.CHAT_ROOM);
+
   const poll = (opts?: { force?: boolean }) =>
-    runPollTick(storage, source, { staggerMs: STAGGER_MS, backoff, ...opts });
+    runPollTick(storage, source, {
+      staggerMs: STAGGER_MS,
+      backoff,
+      notifier: room,
+      ...opts,
+    });
 
   // One account, right now: the first fetch after a connect, handed to
   // ctx.waitUntil by the callback handler. No stagger (there is nothing to
   // spread, and the redirect is already gone) and no backoff (a fresh grant
   // has no failure history to honour).
   const pollOne = (accountId: string) =>
-    runPollTick(storage, source, { staggerMs: 0, accountIds: [accountId] });
+    runPollTick(storage, source, {
+      staggerMs: 0,
+      accountIds: [accountId],
+      notifier: room,
+    });
 
   const wiring: Wiring = {
-    app: createApp({ storage, poll, pollOne, config, mcp }),
+    app: createApp({ storage, poll, pollOne, config, mcp, room }),
     storage,
     poll,
   };
@@ -182,15 +203,50 @@ export default {
 };
 
 /**
- * True when `at` lands on (or within a few minutes of) one of the slots
- * poller/scheduler.ts publishes — weekdays only, UTC, because the US session is
- * what defines the window.
+ * The Workers half of the room seam: a stub, and the two things the rest of the
+ * codebase is allowed to ask of it. Everything above this line is written
+ * against the `Room` interface in src/room.ts and would run unchanged with no
+ * room at all.
+ *
+ * Stateless and cheap to construct — the namespace is the binding, and
+ * `getByName` resolves the same object every time from any isolate, which is
+ * the whole reason a single group room works without a coordinator.
  */
-export function isScheduledSlot(at: Date): boolean {
-  const weekday = at.getUTCDay();
-  if (weekday === 0 || weekday === 6) return false;
-  const minute = at.getUTCHours() * 60 + at.getUTCMinutes();
-  return runMinutesUtc().some((slot) => Math.abs(slot - minute) <= SLOT_TOLERANCE_MIN);
+class DurableRoom implements Room {
+  constructor(private readonly namespace: DurableObjectNamespace<ChatRoom>) {}
+
+  /**
+   * One RPC call, one billed request, however many sockets are on the other
+   * side — outgoing WebSocket messages are free. Never throws: callers are
+   * either mid-response or mid-cron and have already done the durable work.
+   */
+  async broadcast(items: TimelineItem[]): Promise<void> {
+    if (items.length === 0) return;
+    try {
+      await this.namespace.getByName(ROOM_NAME).broadcast(items);
+    } catch (err) {
+      console.warn(
+        JSON.stringify({ msg: "room broadcast failed", err: message(err) }),
+      );
+    }
+  }
+
+  /**
+   * Forward the upgrade. The original headers carry the WebSocket handshake, so
+   * they are copied rather than rebuilt — minus the cookie, which has done its
+   * job at the session check and has no business travelling any further.
+   */
+  upgrade(request: Request, member: RoomMember): Promise<Response> {
+    const headers = new Headers(request.headers);
+    headers.delete("cookie");
+    headers.set("x-room-member-id", member.id);
+    // Names are free text and headers are not: percent-encode, decode in the room.
+    headers.set("x-room-member-name", encodeURIComponent(member.name));
+
+    return this.namespace
+      .getByName(ROOM_NAME)
+      .fetch(new Request(request.url, { method: "GET", headers }));
+  }
 }
 
 function json(body: unknown, status = 200): Response {

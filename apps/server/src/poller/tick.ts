@@ -8,6 +8,7 @@ import {
   suppressCorporateActions,
   toFeedEventRow,
 } from "../diff/index.js";
+import { notifyFeedEvents, type Notifier } from "../room.js";
 import type { Storage } from "../storage/index.js";
 import { hashPositions, type PortfolioSource } from "./source.js";
 
@@ -25,6 +26,12 @@ export interface TickOptions {
    * a friend who just linked must not drag the whole group into a pass.
    */
   accountIds?: string[];
+  /**
+   * Where a tick's new events go the moment they are durable, so a friend
+   * watching the thread sees the move without waiting out a poll. Omitted on
+   * Node and in tests, which is the no-op case and costs nothing.
+   */
+  notifier?: Notifier;
 }
 
 export interface TickResult {
@@ -145,7 +152,10 @@ export async function runPollTick(
   }
 
   const filtered = suppressCorporateActions(candidates, options.diff);
-  await storage.insertFeedEvents(filtered.map(toFeedEventRow));
+  // Projected once and reused: the rows that go to D1 and the rows that go to
+  // the room must carry the same ids, or the client would dedupe neither.
+  const rows = filtered.map(toFeedEventRow);
+  await storage.insertFeedEvents(rows);
   result.events = filtered.filter((c) => !c.suppressed).length;
   result.suppressed = filtered.filter((c) => c.suppressed).length;
 
@@ -156,6 +166,20 @@ export async function runPollTick(
       holdings.map((p) => toStoredPosition(accountId, p, holdings, at)),
     );
     await storage.markPolled(accountId, at);
+  }
+
+  // Last, once the whole tick is durable: a client that reacts to this by
+  // re-reading must not find a half-written pass. Suppressed rows are stored
+  // but never published, exactly as /api/chat would not have published them.
+  const published = rows.filter((row) => !row.suppressed);
+  if (options.notifier && published.length > 0) {
+    await notifyFeedEvents(storage, options.notifier, published).catch((err) => {
+      // The events are in D1; the next poll delivers them. A dead room must
+      // never turn a successful tick into a failed one.
+      console.warn(
+        `room broadcast failed: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    });
   }
 
   return result;
