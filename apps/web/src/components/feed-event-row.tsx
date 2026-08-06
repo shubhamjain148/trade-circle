@@ -16,6 +16,12 @@ interface FeedEventRowProps {
   showAuthor?: boolean
   /** Ticking clock, so "7h" doesn't freeze on a tab left open all evening. */
   now?: number
+  /**
+   * `li` inside a feed's list; `div` inside the chat, where the surrounding
+   * flow is a conversation and a stray list item would be a lie to the reader
+   * of the accessibility tree.
+   */
+  as?: "li" | "div"
 }
 
 /**
@@ -29,6 +35,7 @@ export function FeedEventRow({
   event,
   showAuthor = true,
   now,
+  as: Row = "li",
 }: FeedEventRowProps) {
   const style = EVENT_STYLES[event.type]
   const exited = event.type === "EXITED"
@@ -37,7 +44,14 @@ export function FeedEventRow({
   const instrument = instrumentLabel(event.symbol, event.instrumentName)
 
   return (
-    <li className="-mx-2 grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-x-3 rounded-md px-2 py-2 transition-colors hover:bg-foreground/[0.035]">
+    <Row
+      className={cn(
+        "grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-x-3 px-2 py-2 transition-colors hover:bg-foreground/[0.035]",
+        // In a feed the row bleeds past the column so the highlight tracks the
+        // whole line; in the chat its band supplies that bleed instead.
+        Row === "li" && "-mx-2 rounded-md"
+      )}
+    >
       {showAuthor ? (
         <MemberAvatar
           name={event.accountName}
@@ -115,6 +129,6 @@ export function FeedEventRow({
           {relativeTimeCompact(event.detectedAt, now)}
         </time>
       </div>
-    </li>
+    </Row>
   )
 }

@@ -57,9 +57,7 @@ export function App() {
     )
   }
 
-  return (
-    <FeedScreen view={route.view} member={member} account={account} />
-  )
+  return <FeedScreen view={route.view} member={member} account={account} />
 }
 
 function FeedScreen({
@@ -74,6 +72,10 @@ function FeedScreen({
   const { refresh } = useSession()
   const { data: members, isLoading: isLoadingMembers, error } = useMembers()
 
+  // The chat is a viewport-tall column with its own scroller; the member feeds
+  // are ordinary documents. The shell has to know which one it is holding.
+  const chat = view.kind === "group"
+
   // A session that expires while the tab is open shows up as a 401 on the
   // next fetch. Send it back through /api/me rather than letting the feed
   // report "can't reach the watcher" for what is really a sign-out.
@@ -83,6 +85,7 @@ function FeedScreen({
 
   return (
     <AppShell
+      fill={chat}
       account={<AccountMenu member={member} account={account} />}
       switcher={
         <MemberSwitcher
@@ -93,10 +96,14 @@ function FeedScreen({
         />
       }
     >
-      <div className="flex flex-col gap-5">
+      <div
+        className={
+          chat ? "flex min-h-0 flex-1 flex-col gap-4" : "flex flex-col gap-5"
+        }
+      >
         <ConnectionNotice account={account} />
 
-        {view.kind === "group" ? (
+        {chat ? (
           <GroupChatView members={members} member={member} />
         ) : (
           <MemberFeedView

@@ -1,8 +1,19 @@
 import * as React from "react"
 
 import { Button } from "@workspace/ui/components/button"
+import {
+  MessageScroller,
+  MessageScrollerButton,
+  MessageScrollerContent,
+  MessageScrollerItem,
+  MessageScrollerProvider,
+  MessageScrollerViewport,
+} from "@workspace/ui/components/message-scroller"
 
-import { ChatMessageRow } from "@/components/chat-message-row"
+import {
+  ChatMessageGroup,
+  type MessageGroupItem,
+} from "@/components/chat-message-group"
 import { FeedEventRow } from "@/components/feed-event-row"
 import {
   FeedNotice,
@@ -12,6 +23,7 @@ import {
 import type { ChatItem } from "@/hooks/use-chat"
 import { useNow } from "@/hooks/use-now"
 import { dayKey, dayLabel } from "@/lib/format"
+import type { FeedEvent } from "@/lib/types"
 
 interface ChatTimelineProps {
   items: ChatItem[]
@@ -23,11 +35,18 @@ interface ChatTimelineProps {
   onRetryMessage: (id: string) => void
 }
 
-interface DaySection {
-  key: string
-  label: string
-  items: ChatItem[]
-}
+/** Lines from one person inside this window read as one breath, not three. */
+const GROUP_WINDOW_MS = 5 * 60_000
+
+/**
+ * What the conversation is actually made of: a day marker, a run of speech from
+ * one person, or a band of trades the watcher posted. Events are grouped too —
+ * a poll that catches four moves at once is one interruption, not four.
+ */
+type ChatEntry =
+  | { kind: "day"; key: string; label: string }
+  | { kind: "events"; key: string; events: FeedEvent[] }
+  | { kind: "group"; key: string; group: MessageGroupItem }
 
 function itemTime(item: ChatItem): string {
   return item.kind === "message" ? item.createdAt : item.detectedAt
@@ -35,28 +54,83 @@ function itemTime(item: ChatItem): string {
 
 /**
  * The chat arrives oldest-first — the opposite of /api/feed, because the newest
- * line belongs next to the composer. Day sections keep the feed's rhythm, they
- * just run down the page instead of up it.
+ * line belongs next to the composer. One pass turns that flat list into the
+ * blocks above, so nothing downstream has to look at its neighbours.
  */
-function groupByDay(items: ChatItem[], now: number): DaySection[] {
-  const sections: DaySection[] = []
+function toEntries(
+  items: ChatItem[],
+  memberId: string,
+  now: number
+): ChatEntry[] {
+  const entries: ChatEntry[] = []
+  let day = ""
 
   for (const item of items) {
     const at = itemTime(item)
     const key = dayKey(at)
-    const current = sections.at(-1)
 
-    if (current?.key === key) {
-      current.items.push(item)
+    if (key !== day) {
+      day = key
+      entries.push({ kind: "day", key: `day:${key}`, label: dayLabel(at, now) })
+    }
+
+    const last = entries.at(-1)
+
+    if (item.kind === "event") {
+      if (last?.kind === "events") last.events.push(item)
+      else entries.push({ kind: "events", key: item.id, events: [item] })
       continue
     }
 
-    sections.push({ key, label: dayLabel(at, now), items: [item] })
+    const message = item
+    const previous = last?.kind === "group" ? last.group : undefined
+    const previousAt = previous?.messages.at(-1)?.createdAt
+
+    if (
+      previous?.memberId === message.memberId &&
+      previousAt !== undefined &&
+      new Date(message.createdAt).getTime() - new Date(previousAt).getTime() <=
+        GROUP_WINDOW_MS
+    ) {
+      previous.messages.push(message)
+      continue
+    }
+
+    entries.push({
+      kind: "group",
+      key: message.id,
+      group: {
+        key: message.id,
+        memberId: message.memberId,
+        authorName: message.authorName,
+        own: message.memberId === memberId,
+        messages: [message],
+      },
+    })
   }
 
-  return sections
+  return entries
 }
 
+function DaySeparator({ label }: { label: string }) {
+  return (
+    <div className="flex items-center gap-3 py-1">
+      <span aria-hidden className="h-px flex-1 bg-border" />
+      <h3 className="font-mono text-3xs font-medium tracking-caps text-muted-foreground uppercase">
+        {label}
+      </h3>
+      <span aria-hidden className="h-px flex-1 bg-border" />
+    </div>
+  )
+}
+
+/**
+ * The thread itself. Scrolling is the MessageScroller's job, not ours: it
+ * follows new lines only while the reader is already pinned to the bottom, so
+ * scrolling up to yesterday is a deliberate opt-out that stays put. The hand-
+ * rolled window-scroll listener this replaced did the same thing worse, and a
+ * second scroll system on the same content would fight it.
+ */
 export function ChatTimeline({
   items,
   memberId,
@@ -66,77 +140,102 @@ export function ChatTimeline({
   onRetryMessage,
 }: ChatTimelineProps) {
   const now = useNow()
-  const sections = React.useMemo(() => groupByDay(items, now), [items, now])
+  const entries = React.useMemo(
+    () => toEntries(items, memberId, now),
+    [items, memberId, now]
+  )
 
   if (isLoading && items.length === 0) {
-    return <FeedSkeleton />
+    return (
+      <Frame>
+        <FeedSkeleton />
+      </Frame>
+    )
   }
 
   // An error with rows already on screen is a stale banner's job, not a wipe:
   // only a cold start that never landed gets to replace the thread.
   if (error && items.length === 0) {
     return (
-      <FeedNotice
-        tone="alert"
-        title="Can't reach the watcher"
-        description="The chat service didn't answer, so nothing here is current. Your friends' portfolios are untouched — this app only ever reads."
-        hint={POLLING_CADENCE}
-        action={
-          <Button variant="outline" size="sm" onClick={onReload}>
-            Try again
-          </Button>
-        }
-      />
+      <Frame>
+        <FeedNotice
+          tone="alert"
+          title="Can't reach the watcher"
+          description="The chat service didn't answer, so nothing here is current. Your friends' portfolios are untouched — this app only ever reads."
+          hint={POLLING_CADENCE}
+          action={
+            <Button variant="outline" size="sm" onClick={onReload}>
+              Try again
+            </Button>
+          }
+        />
+      </Frame>
     )
   }
 
-  if (sections.length === 0) {
+  if (entries.length === 0) {
     return (
-      <FeedNotice
-        title="Nothing here yet"
-        description="Say something, or wait for someone to make a move. Trades land in this thread on their own."
-        hint={POLLING_CADENCE}
-      />
+      <Frame>
+        <FeedNotice
+          title="Nothing here yet"
+          description="Say something, or wait for someone to make a move. Trades land in this thread on their own."
+          hint={POLLING_CADENCE}
+        />
+      </Frame>
     )
   }
 
   return (
-    <div className="flex flex-col gap-7">
-      {sections.map((section, index) => (
-        <section key={section.key}>
-          <div className="flex items-baseline justify-between gap-3 border-b border-border pb-1.5">
-            <h3 className="font-mono text-2xs font-medium tracking-caps text-muted-foreground uppercase">
-              {section.label}
-            </h3>
-            {/* The unit belongs on the newest block — the one you land on —
-                but only if that block actually has a number in it. A day of
-                pure conversation would be labelled "% of portfolio" over
-                nothing. */}
-            {index === sections.length - 1 &&
-            section.items.some((item) => item.kind === "event") ? (
-              <span className="font-mono text-3xs tracking-caps text-muted-foreground uppercase">
-                % of portfolio
-              </span>
-            ) : null}
-          </div>
+    <MessageScrollerProvider autoScroll defaultScrollPosition="end">
+      <MessageScroller className="min-h-0 flex-1">
+        <MessageScrollerViewport
+          aria-label="Group chat"
+          className="scroll-fade-b"
+        >
+          <MessageScrollerContent className="gap-4 pb-1">
+            {entries.map((entry) => (
+              <MessageScrollerItem
+                key={entry.key}
+                messageId={entry.key}
+                /* The shipped 10rem guess is a chat with paragraphs in it;
+                   most lines here are one sentence, and over-reserving makes
+                   the scrollbar breathe on every pass. */
+                className="[contain-intrinsic-size:auto_3rem]"
+              >
+                {entry.kind === "day" ? (
+                  <DaySeparator label={entry.label} />
+                ) : entry.kind === "events" ? (
+                  /* Trades are not speech: a full-width band with hairlines
+                     top and bottom, keeping the feed's mono tag, % and time. */
+                  <div className="-mx-2 divide-y divide-border border-y border-border">
+                    {entry.events.map((event) => (
+                      <FeedEventRow
+                        key={event.id}
+                        as="div"
+                        event={event}
+                        now={now}
+                      />
+                    ))}
+                  </div>
+                ) : (
+                  <ChatMessageGroup
+                    group={entry.group}
+                    now={now}
+                    onRetry={onRetryMessage}
+                  />
+                )}
+              </MessageScrollerItem>
+            ))}
+          </MessageScrollerContent>
+        </MessageScrollerViewport>
 
-          <ul className="divide-y divide-border">
-            {section.items.map((item) =>
-              item.kind === "event" ? (
-                <FeedEventRow key={item.id} event={item} now={now} />
-              ) : (
-                <ChatMessageRow
-                  key={item.id}
-                  message={item}
-                  own={item.memberId === memberId}
-                  now={now}
-                  onRetry={onRetryMessage}
-                />
-              )
-            )}
-          </ul>
-        </section>
-      ))}
-    </div>
+        <MessageScrollerButton />
+      </MessageScroller>
+    </MessageScrollerProvider>
   )
+}
+
+/** Empty, loading and error all sit where the thread would, and scroll like it. */
+function Frame({ children }: { children: React.ReactNode }) {
+  return <div className="min-h-0 flex-1 overflow-y-auto">{children}</div>
 }

@@ -14,20 +14,15 @@ interface GroupChatViewProps {
   member: Member
 }
 
-/** Near enough to the bottom that new lines should follow you down. */
-const STICK_THRESHOLD = 140
-
-function atBottom(): boolean {
-  return (
-    window.innerHeight + window.scrollY >=
-    document.body.scrollHeight - STICK_THRESHOLD
-  )
-}
-
 /**
  * The group surface: the thread the friends already had, with the watcher
  * posting into it. Trades are the same rows the feed always drew — they just
  * arrive between the sentences now (docs/RESEARCH.md decisions log).
+ *
+ * Three bands in a viewport-tall column — heading, thread, composer. Following
+ * the newest line is the MessageScroller's job inside ChatTimeline; there is no
+ * window-scroll listener here any more, and deliberately only one scroller on
+ * the screen at a time.
  */
 export function GroupChatView({ members, member }: GroupChatViewProps) {
   const { refresh } = useSession()
@@ -44,39 +39,11 @@ export function GroupChatView({ members, member }: GroupChatViewProps) {
     if (error instanceof ApiError && error.status === 401) void refresh()
   }, [error, refresh])
 
-  // Follow the thread down, but only if the reader was already at the bottom —
-  // yanking someone out of yesterday to show them a new line is rude.
-  const stick = React.useRef(true)
-  const landed = React.useRef(false)
-
-  React.useEffect(() => {
-    const onScroll = () => {
-      stick.current = atBottom()
-    }
-
-    window.addEventListener("scroll", onScroll, { passive: true })
-    return () => window.removeEventListener("scroll", onScroll)
-  }, [])
-
-  React.useLayoutEffect(() => {
-    if (items.length === 0) return
-    if (landed.current && !stick.current) return
-
-    const first = !landed.current
-    landed.current = true
-
-    window.scrollTo({
-      top: document.body.scrollHeight,
-      // The cold open is not a movement; everything after it is.
-      behavior: first ? "auto" : "smooth",
-    })
-  }, [items])
-
   return (
-    <div className="flex flex-col gap-5">
+    <div className="flex min-h-0 flex-1 flex-col gap-3">
       {/* min-h-11 matches the member header, so the first row lands in the
           same place whichever tab you're on. */}
-      <header className="flex min-h-11 flex-col justify-center">
+      <header className="flex min-h-11 shrink-0 flex-col justify-center">
         <h2 className="font-heading text-base font-medium tracking-tight">
           Group chat
         </h2>
