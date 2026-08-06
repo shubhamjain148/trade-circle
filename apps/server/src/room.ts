@@ -1,5 +1,6 @@
 import type { FeedEventRow } from "./domain.js";
 import { toFeedEvents } from "./feed.js";
+import type { Pusher } from "./push/notify.js";
 import type { Storage } from "./storage/index.js";
 import type { TimelineItem } from "./types.js";
 
@@ -77,21 +78,29 @@ export const noopNotifier: Notifier = {
  *
  * Reads members and accounts, so it is only worth calling when there is
  * something to say — poller/tick.ts checks that before it calls.
+ *
+ * Web Push rides the *same* projection rather than repeating it. That is the
+ * whole reason the pusher is handed in here instead of being called separately
+ * from the tick: a socket and a lock screen cannot disagree about who is
+ * paused or who is named, because there is only one list.
  */
 export async function notifyFeedEvents(
   storage: Storage,
   notifier: Notifier,
   rows: FeedEventRow[],
+  pusher?: Pusher,
 ): Promise<void> {
   if (rows.length === 0) return;
   const [members, accounts] = await Promise.all([
     storage.listMembers(),
     storage.listAccounts(),
   ]);
-  const items = toFeedEvents(rows, members, accounts).map(
-    (event): TimelineItem => ({ kind: "event", ...event }),
-  );
+  const events = toFeedEvents(rows, members, accounts);
+  const items = events.map((event): TimelineItem => ({ kind: "event", ...event }));
   await notifier.broadcast(items);
+  // After the broadcast: the tab that is already open should not wait behind a
+  // fan-out of HTTPS requests to Apple and Google.
+  if (pusher) await pusher.feedEvents(events);
 }
 
 /**

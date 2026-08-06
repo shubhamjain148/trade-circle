@@ -148,10 +148,86 @@ self.addEventListener("fetch", (event) => {
   }
 })
 
-// --- Web Push seam -----------------------------------------------------------
-// The next feature extends this file rather than adding a second worker: a
-// "push" listener calling self.registration.showNotification(), and a
-// "notificationclick" listener that focuses an existing client if one is open
-// and otherwise opens the deep link carried on the payload. Subscription
-// management (pushManager.subscribe with the VAPID key, POSTing the endpoint
-// to /api) belongs on the page side, not here.
+// --- Web Push ----------------------------------------------------------------
+// Subscription management (pushManager.subscribe with the VAPID key, POSTing
+// the endpoint to /api) lives on the page side, in notifications-section.tsx.
+// What is left here is the two things only a worker can do: receive a message
+// while every tab is closed, and decide where a tap goes.
+//
+// The payload is the flat JSON apps/server/src/push/notify.ts builds —
+// { title, body, tag, url }. Position events only; chat does not push.
+
+/** Never shown in the normal case; the fallback for a payload we can't read. */
+const FALLBACK_NOTIFICATION = {
+  title: "Movement in the group",
+  body: "Open the watcher to see what changed.",
+  tag: "group-moves",
+  url: "/#/",
+}
+
+function readPushPayload(event) {
+  if (!event.data) return FALLBACK_NOTIFICATION
+  try {
+    const payload = event.data.json()
+    if (!payload || typeof payload.title !== "string") return FALLBACK_NOTIFICATION
+    return {
+      title: payload.title,
+      body: typeof payload.body === "string" ? payload.body : "",
+      tag: typeof payload.tag === "string" ? payload.tag : "group-moves",
+      // The server sends a hash route ("#/m/abc"); the worker needs a path it
+      // can open. Anything absolute or off-origin is discarded rather than
+      // followed — a notification must never be a way out of this app.
+      url:
+        typeof payload.url === "string" && payload.url.startsWith("#/")
+          ? `/${payload.url}`
+          : "/#/",
+    }
+  } catch {
+    return FALLBACK_NOTIFICATION
+  }
+}
+
+self.addEventListener("push", (event) => {
+  const payload = readPushPayload(event)
+  // waitUntil is not optional: on both Android and iOS a push that resolves
+  // without showing a notification is a permission the browser can revoke.
+  event.waitUntil(
+    self.registration.showNotification(payload.title, {
+      body: payload.body,
+      // Per event id, so a redelivery of the same move replaces the row it is
+      // already sitting under instead of stacking a second copy.
+      tag: payload.tag,
+      icon: "/icons/icon-192.png",
+      badge: "/icons/icon-192.png",
+      data: { url: payload.url },
+      // No vibration, no requireInteraction, no renotify: this group's moves
+      // land in the middle of the IST night and none of them is an emergency.
+    })
+  )
+})
+
+self.addEventListener("notificationclick", (event) => {
+  event.notification.close()
+  const target = new URL(event.notification.data?.url ?? "/#/", self.location.origin)
+
+  event.waitUntil(
+    (async () => {
+      const clients = await self.clients.matchAll({
+        type: "window",
+        includeUncontrolled: true,
+      })
+
+      // Focus what is already open rather than stacking a second window: on a
+      // phone the app is usually still in the background, and the hash route is
+      // enough to move it to the right screen.
+      for (const client of clients) {
+        if (new URL(client.url).origin !== target.origin) continue
+        await client.focus()
+        if ("navigate" in client) await client.navigate(target.href).catch(() => {})
+        return
+      }
+
+      await self.clients.openWindow(target.href)
+    })()
+  )
+})

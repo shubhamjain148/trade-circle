@@ -9,6 +9,7 @@ import type {
   OAuthConnectionStatus,
   OAuthStateRow,
   Position,
+  PushSubscriptionRow,
   RawArchiveRow,
   SessionRow,
   SnapshotRow,
@@ -57,6 +58,21 @@ export interface Storage {
   /** One member's links, oldest first — the cap counts these. */
   listDeviceLinks(memberId: string): Promise<DeviceLinkRow[]>;
   deleteDeviceLink(tokenHash: string): Promise<void>;
+
+  /**
+   * Keyed on the endpoint hash, so a browser re-subscribing lands on its own
+   * row rather than a second one — and re-subscribing clears the failure count,
+   * because a browser that just handed us a live endpoint is not failing.
+   */
+  upsertPushSubscription(subscription: PushSubscriptionRow): Promise<void>;
+  /** Every device the group has registered. The fan-out reads this once a tick. */
+  listPushSubscriptions(): Promise<PushSubscriptionRow[]>;
+  getPushSubscription(endpointHash: string): Promise<PushSubscriptionRow | undefined>;
+  deletePushSubscription(endpointHash: string): Promise<void>;
+  /** Success: stamps last_ok_at and forgives whatever went wrong before. */
+  markPushSubscriptionOk(endpointHash: string, at: string): Promise<void>;
+  /** Failure: returns the new consecutive-failure count so the caller can prune. */
+  bumpPushSubscriptionFailure(endpointHash: string): Promise<number>;
 
   createSession(session: SessionRow): Promise<void>;
   getSession(tokenHash: string, now: string): Promise<SessionRow | undefined>;

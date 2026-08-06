@@ -63,6 +63,18 @@
     // enforces it; miniflare doesn't). Fine here: the secret is 48 random bytes,
     // so KDF stretching adds little — hardness matters for guessable passwords.
     "VAULT_KDF_ITERATIONS": "100000"
+
+    // Web Push. Fill these in at deploy from `pnpm --filter server vapid:generate`
+    // and set VAPID_PRIVATE_KEY with `wrangler secret put` — never here.
+    // All three or none: src/worker.ts refuses a half-configured VAPID rather
+    // than shipping an Enable button whose every send silently fails.
+    //
+    // The pair is permanent. Rotating it invalidates every subscription the
+    // group has made, and each friend would have to open Settings and turn
+    // notifications on again with nothing telling them to.
+    //
+    // "VAPID_PUBLIC_KEY": "<from vapid:generate>",
+    // "VAPID_SUBJECT": "mailto:you@example.com"
     // MCP_BASE_URL is deliberately NOT here. A key present in `vars` wins over
     // the same key in .dev.vars, so declaring it would make `wrangler dev`
     // unable to point at a local fake and every local connect attempt would

@@ -115,6 +115,31 @@ export interface SessionRow {
   expiresAt: string;
 }
 
+/**
+ * One browser that asked to be told when a friend moves.
+ *
+ * Per-device, not per-member: the subscription is minted by that browser's
+ * push service and dies with that installation, so a member with a phone and a
+ * laptop has two rows and turning one off leaves the other alone. Same
+ * assumption DeviceLinkRow already makes about how this group lives.
+ *
+ * `subscriptionJson` is the browser's own `PushSubscription.toJSON()` —
+ * endpoint plus the p256dh and auth keys — kept whole because sending needs
+ * all three and re-deriving any of it would be inventing structure the Push
+ * API already gave us.
+ */
+export interface PushSubscriptionRow {
+  /** SHA-256 of the endpoint. The endpoint itself is a capability URL. */
+  endpointHash: string;
+  memberId: string;
+  subscriptionJson: string;
+  createdAt: string;
+  /** Last time the push service accepted a message for this device. */
+  lastOkAt: string | null;
+  /** Consecutive failures that were not an outright 404/410. Reset on success. */
+  failedCount: number;
+}
+
 export type OAuthConnectionStatus = "active" | "needs_reauth" | "revoked";
 
 /**

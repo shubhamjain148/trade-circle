@@ -6,6 +6,7 @@ import { McpPortfolioSource } from "./mcp/source.js";
 import { createScheduler } from "./poller/scheduler.js";
 import { SnapshotEchoSource } from "./poller/source.js";
 import { Backoff, runPollTick } from "./poller/tick.js";
+import { createPusher } from "./push/notify.js";
 import { createStorage } from "./storage/index.js";
 
 const storage = await createStorage(config.dbPath);
@@ -18,15 +19,28 @@ const source = new McpPortfolioSource(mcp, {
 });
 const backoff = new Backoff();
 
+// Web Push, when the environment carries a VAPID pair. No `defer`: this process
+// is long-lived, so the fan-out simply runs — `waitUntil` is a Workers concern.
+const pusher = config.vapid
+  ? createPusher({ storage, vapid: config.vapid })
+  : undefined;
+
 const poll = (opts?: { force?: boolean }) =>
-  runPollTick(storage, source, { staggerMs: 30_000, backoff, ...opts });
+  runPollTick(storage, source, { staggerMs: 30_000, backoff, pusher, ...opts });
 
 // One account, right now: the first fetch after a connect. No stagger (there is
 // nothing to spread) and no backoff (a fresh grant has no failure history).
 const pollOne = (accountId: string) =>
-  runPollTick(storage, source, { staggerMs: 0, accountIds: [accountId] });
+  runPollTick(storage, source, { staggerMs: 0, accountIds: [accountId], pusher });
 
-const app = createApp({ storage, poll, pollOne, config, mcp });
+const app = createApp({
+  storage,
+  poll,
+  pollOne,
+  config,
+  mcp,
+  vapidPublicKey: config.vapid?.publicKey,
+});
 
 const scheduler = createScheduler(poll);
 if (process.env.DISABLE_SCHEDULER !== "1") scheduler.start();

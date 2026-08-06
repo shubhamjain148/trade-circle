@@ -8,7 +8,8 @@ import {
   suppressCorporateActions,
   toFeedEventRow,
 } from "../diff/index.js";
-import { notifyFeedEvents, type Notifier } from "../room.js";
+import type { Pusher } from "../push/notify.js";
+import { noopNotifier, notifyFeedEvents, type Notifier } from "../room.js";
 import type { Storage } from "../storage/index.js";
 import { hashPositions, type PortfolioSource } from "./source.js";
 
@@ -32,6 +33,12 @@ export interface TickOptions {
    * Node and in tests, which is the no-op case and costs nothing.
    */
   notifier?: Notifier;
+  /**
+   * Web Push, where the runtime and the environment have it: a friend with the
+   * app closed gets the same events the room just broadcast, minus their own.
+   * Omitted on Node, in tests, and whenever VAPID is unconfigured.
+   */
+  pusher?: Pusher;
 }
 
 export interface TickResult {
@@ -172,12 +179,13 @@ export async function runPollTick(
   // re-reading must not find a half-written pass. Suppressed rows are stored
   // but never published, exactly as /api/chat would not have published them.
   const published = rows.filter((row) => !row.suppressed);
-  if (options.notifier && published.length > 0) {
-    await notifyFeedEvents(storage, options.notifier, published).catch((err) => {
-      // The events are in D1; the next poll delivers them. A dead room must
-      // never turn a successful tick into a failed one.
+  if ((options.notifier || options.pusher) && published.length > 0) {
+    const notifier = options.notifier ?? noopNotifier;
+    await notifyFeedEvents(storage, notifier, published, options.pusher).catch((err) => {
+      // The events are in D1; the next poll delivers them. Neither a dead room
+      // nor a sulking push service may turn a successful tick into a failed one.
       console.warn(
-        `room broadcast failed: ${err instanceof Error ? err.message : String(err)}`,
+        `live delivery failed: ${err instanceof Error ? err.message : String(err)}`,
       );
     });
   }

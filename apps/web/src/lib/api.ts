@@ -94,6 +94,23 @@ export async function send(path: string, method: "POST" | "DELETE") {
   await request(path, { method })
 }
 
+/**
+ * A DELETE that carries a body. Unusual, and deliberate: unsubscribing names
+ * the push endpoint, which is a capability URL and has no business in a path
+ * where it would land in every access log between here and the Worker.
+ */
+export async function sendJson(
+  path: string,
+  method: "POST" | "DELETE",
+  body: unknown
+) {
+  await request(path, {
+    method,
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  })
+}
+
 export const feedPath = (accountId?: string) =>
   accountId
     ? `/api/feed?accountId=${encodeURIComponent(accountId)}`
@@ -139,6 +156,18 @@ export const logoutPath = "/api/auth/logout"
  * member it can ever name is the one holding the session.
  */
 export const deviceLinkPath = "/api/auth/device-link"
+/**
+ * The VAPID application server key the browser needs before it can subscribe.
+ * 404s when the deploy has no keypair, which the Notifications row reads as
+ * "not set up" rather than offering a button that could only fail.
+ */
+export const pushKeyPath = "/api/push/key"
+/**
+ * Register or forget *this browser*. There is no GET: whether this device has a
+ * subscription is something the device already knows, and a server-side answer
+ * would immediately be wrong for the other one you're signed in on.
+ */
+export const pushSubscribePath = "/api/push/subscribe"
 export const connectPath = "/api/connect/indmoney"
 /**
  * A 302 to INDmoney's authorize page — this is a destination for the browser,

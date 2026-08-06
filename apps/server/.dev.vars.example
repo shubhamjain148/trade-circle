@@ -18,3 +18,14 @@ DEV_SEED=1
 
 # Optional. Lowers the vault KDF work factor if the free-plan CPU limit bites.
 # VAULT_KDF_ITERATIONS=100000
+
+# Web Push (RFC 8292). All three or none — a public key without a private one
+# gives the settings screen a working Enable button whose every send then fails.
+# Generate a pair with `pnpm --filter server vapid:generate`. Unset is fine:
+# /api/push/key 404s and the Notifications row says the watcher has no keys.
+#
+# Push only reaches a real device over HTTPS, so `wrangler dev` on localhost can
+# exercise the UI states but not an actual delivery.
+# VAPID_PUBLIC_KEY=
+# VAPID_PRIVATE_KEY=
+# VAPID_SUBJECT=mailto:you@example.com

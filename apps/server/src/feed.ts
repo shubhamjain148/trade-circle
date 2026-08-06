@@ -6,6 +6,14 @@ import type { FeedEvent } from "./types.js";
  * paused members are dropped entirely, anonymous ones lose their name. Shared
  * so /api/feed and /api/chat can never drift on who is allowed to be seen.
  */
+/**
+ * What an anonymous member is called on the wire. Exported because the push
+ * notifier has to recognise it: a notification for an anonymous move carries no
+ * name and no deep link, and this string is the only signal the projection
+ * leaves behind that a member chose to be unnamed.
+ */
+export const ANONYMOUS_NAME = "Someone in the group";
+
 export function toFeedEvents(
   rows: FeedEventRow[],
   members: MemberRow[],
@@ -25,8 +33,7 @@ export function toFeedEvents(
     events.push({
       id: row.id,
       accountId: member.id,
-      accountName:
-        member.visibility === "anonymous" ? "Someone in the group" : member.name,
+      accountName: member.visibility === "anonymous" ? ANONYMOUS_NAME : member.name,
       type: row.type,
       symbol: row.symbol,
       instrumentName: row.instrumentName,

@@ -24,6 +24,7 @@ import {
 } from "./mcp/oauth.js";
 import { nextRunAt } from "./poller/scheduler.js";
 import { createPositionsApp } from "./positions.js";
+import { createPushApp } from "./push.js";
 import type { TickResult } from "./poller/tick.js";
 import type { Room } from "./room.js";
 import type { Storage } from "./storage/index.js";
@@ -47,6 +48,12 @@ export interface ApiDeps {
    * and every client falls back to the poll loop it never stopped running.
    */
   room?: Room;
+  /**
+   * The VAPID public key, when the deploy has one. Only /api/push/key reads it;
+   * everything about actually sending lives in src/push/notify.ts and never
+   * touches a request. Absent means the Notifications row says "not set up".
+   */
+  vapidPublicKey?: string;
 }
 
 export function createApp({
@@ -56,6 +63,7 @@ export function createApp({
   config,
   mcp,
   room,
+  vapidPublicKey,
 }: ApiDeps): Hono<SessionEnv> {
   const app = new Hono<SessionEnv>();
   const cookieOpts = {
@@ -292,6 +300,10 @@ export function createApp({
 
   // One member's current holdings. Session-gated inside; see src/positions.ts.
   app.route("/", createPositionsApp({ storage }));
+
+  // Web Push subscriptions, one row per browser. Session-gated inside; see
+  // src/push.ts. Sending is not here — it hangs off the poll tick.
+  app.route("/", createPushApp({ storage, vapidPublicKey }));
 
   // Roster + invites. Session- and role-gated inside; see src/admin.ts.
   app.route("/", createAdminApp({ storage, config }));

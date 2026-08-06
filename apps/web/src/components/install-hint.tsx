@@ -1,6 +1,7 @@
 import * as React from "react"
 
 import { useStandalone } from "@/hooks/use-standalone"
+import { isIOS } from "@/lib/platform"
 
 interface BeforeInstallPromptEvent extends Event {
   prompt: () => Promise<void>
@@ -41,13 +42,6 @@ function useInstallPrompt() {
     () => deferred,
     () => null
   )
-}
-
-/** iPadOS reports itself as a Mac; the touch count is what gives it away. */
-function isIOS(): boolean {
-  const { userAgent, maxTouchPoints } = window.navigator
-  if (/iphone|ipad|ipod/i.test(userAgent)) return true
-  return /macintosh/i.test(userAgent) && maxTouchPoints > 1
 }
 
 /**

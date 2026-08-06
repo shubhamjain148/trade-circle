@@ -79,6 +79,37 @@ openssl rand -base64 48        # generate; paste at the prompt, do not pass it a
 pnpm exec wrangler secret put APP_SECRET
 ```
 
+**4b. Set the Web Push identity (optional, but do it now).** VAPID is how the push services know
+messages came from this watcher. Skipping it is a supported state — `/api/push/key` 404s and the
+Notifications row in Settings says the watcher has no keys — but adding it later means every friend
+has to go turn notifications on.
+
+```bash
+pnpm --filter server vapid:generate    # prints one keypair and these commands
+```
+
+Put the **public** key and the subject in `wrangler.jsonc` under `vars` (both are public — the
+public key travels in every push request's `Authorization` header), and the **private** key in a
+secret:
+
+```jsonc
+"vars": {
+  "VAPID_PUBLIC_KEY": "<from vapid:generate>",
+  "VAPID_SUBJECT": "mailto:you@example.com"
+}
+```
+
+```bash
+pnpm exec wrangler secret put VAPID_PRIVATE_KEY
+```
+
+Set all three or none: `src/worker.ts` throws on a half-configured VAPID rather than serving a
+settings screen with an Enable button whose every send then fails silently.
+
+**The keypair is permanent.** Rotating it invalidates every subscription the group has made, and
+each friend would have to open Settings and turn notifications on again with nothing prompting
+them. Keep it somewhere you keep `APP_SECRET`.
+
 **5. First deploy** — needed before you know the URL.
 
 ```bash
@@ -140,6 +171,21 @@ pnpm exec wrangler tail
 
 Each tick logs one structured line: `{"msg":"poll tick","cron":…,"polled":N,"events":N,…}`, or
 `{"msg":"poll skipped, outside market window",…}`.
+
+**10. Confirm Web Push, if you configured it.** Notifications need HTTPS and a real push service,
+so this is the one part of the feature that cannot be verified before a deploy. On a phone:
+
+1. Open `{APP_URL}`, install it (Android: the install prompt; **iOS: Share → Add to Home Screen —
+   iOS only allows notifications from the installed app, and a Safari tab will correctly report
+   that it can't**), and open the installed app.
+2. Settings → Notifications → *Turn on for this device*, accept the permission prompt.
+3. Confirm the row now reads "This device buzzes when someone opens…".
+4. Have a second friend's account move a position — or run `POST /api/poll?force=1` as admin after
+   a real change — and check the notification arrives with the app **closed**.
+5. Tap it: it should focus the installed app on that member's feed, not open a second window.
+6. `wrangler tail` shows `{"msg":"push fan-out","sent":N,"removed":N,"failed":N}`.
+
+The sender never notifies itself, so test with two devices signed in as two different members.
 
 ### Rollback
 

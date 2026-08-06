@@ -14,6 +14,7 @@ import type {
   OAuthConnectionStatus,
   OAuthStateRow,
   Position,
+  PushSubscriptionRow,
   RawArchiveRow,
   SessionRow,
   SnapshotRow,
@@ -135,6 +136,18 @@ CREATE TABLE IF NOT EXISTS sessions (
   expires_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS sessions_member ON sessions(member_id);
+
+-- Web Push, one row per browser rather than per member; see
+-- migrations/0003_push_subscriptions.sql for why the endpoint is hashed.
+CREATE TABLE IF NOT EXISTS push_subscriptions (
+  endpoint_hash     TEXT PRIMARY KEY,
+  member_id         TEXT NOT NULL REFERENCES members(id),
+  subscription_json TEXT NOT NULL,
+  created_at        TEXT NOT NULL,
+  last_ok_at        TEXT,
+  failed_count      INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS push_subscriptions_member ON push_subscriptions(member_id);
 
 -- The vault. client_info_json_enc is required: without the DCR registration the
 -- SDK will not refresh, and the friend gets a spurious re-login (appendix 1 §1.3).
@@ -607,6 +620,68 @@ export class SqliteStorage implements Storage {
     this.db.prepare(`DELETE FROM device_links WHERE token_hash = ?`).run(tokenHash);
   }
 
+  async upsertPushSubscription(s: PushSubscriptionRow): Promise<void> {
+    this.db
+      .prepare(
+        `INSERT INTO push_subscriptions
+           (endpoint_hash, member_id, subscription_json, created_at, last_ok_at, failed_count)
+         VALUES (?, ?, ?, ?, ?, ?)
+         ON CONFLICT(endpoint_hash) DO UPDATE SET
+           member_id = excluded.member_id,
+           subscription_json = excluded.subscription_json,
+           failed_count = 0`,
+      )
+      .run(
+        s.endpointHash,
+        s.memberId,
+        s.subscriptionJson,
+        s.createdAt,
+        s.lastOkAt,
+        s.failedCount,
+      );
+  }
+
+  async listPushSubscriptions(): Promise<PushSubscriptionRow[]> {
+    const rows = this.db
+      .prepare(`SELECT * FROM push_subscriptions ORDER BY created_at, endpoint_hash`)
+      .all() as Record<string, string | number | null>[];
+    return rows.map(toPushSubscription);
+  }
+
+  async getPushSubscription(
+    endpointHash: string,
+  ): Promise<PushSubscriptionRow | undefined> {
+    const row = this.db
+      .prepare(`SELECT * FROM push_subscriptions WHERE endpoint_hash = ?`)
+      .get(endpointHash) as Record<string, string | number | null> | undefined;
+    return row ? toPushSubscription(row) : undefined;
+  }
+
+  async deletePushSubscription(endpointHash: string): Promise<void> {
+    this.db
+      .prepare(`DELETE FROM push_subscriptions WHERE endpoint_hash = ?`)
+      .run(endpointHash);
+  }
+
+  async markPushSubscriptionOk(endpointHash: string, at: string): Promise<void> {
+    this.db
+      .prepare(
+        `UPDATE push_subscriptions SET last_ok_at = ?, failed_count = 0
+         WHERE endpoint_hash = ?`,
+      )
+      .run(at, endpointHash);
+  }
+
+  async bumpPushSubscriptionFailure(endpointHash: string): Promise<number> {
+    this.db
+      .prepare(
+        `UPDATE push_subscriptions SET failed_count = failed_count + 1
+         WHERE endpoint_hash = ?`,
+      )
+      .run(endpointHash);
+    return (await this.getPushSubscription(endpointHash))?.failedCount ?? 0;
+  }
+
   async createSession(session: SessionRow): Promise<void> {
     this.db
       .prepare(
@@ -828,6 +903,19 @@ function toAccount(r: Record<string, string | null>): AccountRow {
     provider: "indmoney",
     status: String(r.status) as AccountStatus,
     lastPolledAt: r.last_polled_at ?? null,
+  };
+}
+
+function toPushSubscription(
+  r: Record<string, string | number | null>,
+): PushSubscriptionRow {
+  return {
+    endpointHash: String(r.endpoint_hash),
+    memberId: String(r.member_id),
+    subscriptionJson: String(r.subscription_json),
+    createdAt: String(r.created_at),
+    lastOkAt: r.last_ok_at === null ? null : String(r.last_ok_at),
+    failedCount: Number(r.failed_count),
   };
 }
 

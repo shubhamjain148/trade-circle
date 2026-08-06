@@ -10,6 +10,7 @@
     "seed": "tsx src/seed.ts",
     "invite": "tsx src/invite.ts",
     "promote": "tsx src/promote.ts",
+    "vapid:generate": "tsx src/push/vapid-generate.ts",
     "test": "NODE_ENV=test node --import tsx --test \"src/**/*.test.ts\"",
     "typecheck": "tsc --noEmit",
     "cf:dev": "wrangler dev --test-scheduled",

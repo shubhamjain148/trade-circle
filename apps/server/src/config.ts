@@ -14,6 +14,12 @@ export interface Config {
   /** How long an in-flight OAuth authorization is allowed to sit unanswered. */
   oauthStateTtlMs: number;
   clientName: string;
+  /**
+   * Web Push signing identity (RFC 8292), when the environment carries one.
+   * All three or nothing — see `resolveVapid`. Absent is a supported state:
+   * /api/push/key 404s and the settings row says so.
+   */
+  vapid?: { publicKey: string; privateKey: string; subject: string };
 }
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
@@ -26,6 +32,30 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     sessionTtlMs: 90 * 86_400_000,
     oauthStateTtlMs: 10 * 60_000,
     clientName: env.MCP_CLIENT_NAME ?? "indmoney-watcher",
+    vapid: resolveVapid(env),
+  };
+}
+
+/**
+ * All three or nothing. A public key without a private one gives the settings
+ * screen a working Enable button whose every send then fails silently — the
+ * one failure mode a friend has no way to notice. src/worker.ts enforces the
+ * same rule against Workers vars.
+ */
+function resolveVapid(env: NodeJS.ProcessEnv): Config["vapid"] {
+  const { VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY, VAPID_SUBJECT } = env;
+  if (!VAPID_PUBLIC_KEY && !VAPID_PRIVATE_KEY && !VAPID_SUBJECT) return undefined;
+  if (!VAPID_PUBLIC_KEY || !VAPID_PRIVATE_KEY || !VAPID_SUBJECT) {
+    throw new Error(
+      "VAPID is half-configured — set VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY and " +
+        "VAPID_SUBJECT together, or none of them. Generate a pair with " +
+        "`pnpm --filter server vapid:generate`.",
+    );
+  }
+  return {
+    publicKey: VAPID_PUBLIC_KEY,
+    privateKey: VAPID_PRIVATE_KEY,
+    subject: VAPID_SUBJECT,
   };
 }
 

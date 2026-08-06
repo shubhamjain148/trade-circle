@@ -6,6 +6,8 @@ import { McpPortfolioSource } from "./mcp/source.js";
 import { isScheduledSlot } from "./poller/scheduler.js";
 import { SnapshotEchoSource } from "./poller/source.js";
 import { Backoff, runPollTick } from "./poller/tick.js";
+import { createPusher } from "./push/notify.js";
+import type { VapidConfig } from "./push/webpush.js";
 import type { ChatRoom } from "./room-object.js";
 import { ROOM_NAME, type Room, type RoomMember } from "./room.js";
 import { D1Storage } from "./storage/d1.js";
@@ -48,6 +50,20 @@ export interface Env {
   MCP_CLIENT_NAME?: string;
   /** Escape hatch for the vault KDF cost; see docs/DEPLOYMENT.md. */
   VAULT_KDF_ITERATIONS?: string;
+  /**
+   * Web Push (RFC 8292). The public key is a var — the browser needs it to
+   * subscribe, and it travels in every push request anyway; the private key is
+   * a secret. Generate a pair with `pnpm --filter server vapid:generate`.
+   *
+   * All three unset is a supported state: /api/push/key 404s, the settings row
+   * says the watcher has no notifications configured, and no tick tries to send.
+   * Rotating the pair invalidates every stored subscription — see the note in
+   * src/push/notify.ts and docs/DEPLOYMENT.md.
+   */
+  VAPID_PUBLIC_KEY?: string;
+  VAPID_PRIVATE_KEY?: string;
+  /** A `mailto:` the push services can complain to. RFC 8292 §2.1. */
+  VAPID_SUBJECT?: string;
   /** "1" exposes POST /api/dev-seed. Never set this in production. */
   DEV_SEED?: string;
 }
@@ -55,7 +71,17 @@ export interface Env {
 interface Wiring {
   app: ReturnType<typeof createApp>;
   storage: D1Storage;
-  poll: (opts?: { force?: boolean }) => ReturnType<typeof runPollTick>;
+  poll: (opts?: PollOptions) => ReturnType<typeof runPollTick>;
+}
+
+interface PollOptions {
+  force?: boolean;
+  /**
+   * The invocation's context, when the caller has one and wants the push
+   * fan-out to outlive the tick. `scheduled()` passes it; a caller already
+   * inside a `waitUntil` (the post-connect first fetch) deliberately does not.
+   */
+  ctx?: ExecutionContext;
 }
 
 /**
@@ -107,13 +133,30 @@ function wire(env: Env): Wiring {
   const backoff = new Backoff();
 
   const room = new DurableRoom(env.CHAT_ROOM);
+  const vapid = vapidConfig(env);
 
-  const poll = (opts?: { force?: boolean }) =>
+  /**
+   * Built per call rather than per isolate, because the only thing that varies
+   * is where the fan-out gets parked: a cron hands it to `waitUntil` so the
+   * tick's own result is logged without waiting on Apple and Google, while a
+   * caller already inside a `waitUntil` just awaits it.
+   */
+  const pusher = (ctx?: ExecutionContext) =>
+    vapid
+      ? createPusher({
+          storage,
+          vapid,
+          defer: ctx ? (work) => ctx.waitUntil(work) : undefined,
+        })
+      : undefined;
+
+  const poll = (opts?: PollOptions) =>
     runPollTick(storage, source, {
       staggerMs: STAGGER_MS,
       backoff,
       notifier: room,
-      ...opts,
+      pusher: pusher(opts?.ctx),
+      force: opts?.force,
     });
 
   // One account, right now: the first fetch after a connect, handed to
@@ -125,10 +168,21 @@ function wire(env: Env): Wiring {
       staggerMs: 0,
       accountIds: [accountId],
       notifier: room,
+      // No ctx: this whole call is already inside the connect handler's
+      // waitUntil, so deferring again would only hide the fan-out from it.
+      pusher: pusher(),
     });
 
   const wiring: Wiring = {
-    app: createApp({ storage, poll, pollOne, config, mcp, room }),
+    app: createApp({
+      storage,
+      poll,
+      pollOne,
+      config,
+      mcp,
+      room,
+      vapidPublicKey: vapid?.publicKey,
+    }),
     storage,
     poll,
   };
@@ -176,7 +230,7 @@ export default {
   async scheduled(
     controller: ScheduledController,
     env: Env,
-    _ctx: ExecutionContext,
+    ctx: ExecutionContext,
   ): Promise<void> {
     const at = new Date(controller.scheduledTime);
     if (!isScheduledSlot(at)) {
@@ -185,7 +239,7 @@ export default {
       );
       return;
     }
-    const result = await wire(env).poll();
+    const result = await wire(env).poll({ ctx });
     console.log(
       JSON.stringify({
         msg: "poll tick",
@@ -258,6 +312,28 @@ function json(body: unknown, status = 200): Response {
 
 function message(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
+}
+
+/**
+ * All three or nothing. A half-configured VAPID is the failure mode worth
+ * refusing loudly: a public key without a private one gives the settings screen
+ * a working Enable button whose every send then fails silently, and the friend
+ * who tapped it has no way to know.
+ */
+function vapidConfig(env: Env): VapidConfig | undefined {
+  const { VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY, VAPID_SUBJECT } = env;
+  if (!VAPID_PUBLIC_KEY && !VAPID_PRIVATE_KEY && !VAPID_SUBJECT) return undefined;
+  if (!VAPID_PUBLIC_KEY || !VAPID_PRIVATE_KEY || !VAPID_SUBJECT) {
+    throw new Error(
+      "VAPID is half-configured — set VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY and " +
+        "VAPID_SUBJECT together, or none of them. See docs/DEPLOYMENT.md.",
+    );
+  }
+  return {
+    publicKey: VAPID_PUBLIC_KEY,
+    privateKey: VAPID_PRIVATE_KEY,
+    subject: VAPID_SUBJECT,
+  };
 }
 
 function stripSlash(url: string): string {

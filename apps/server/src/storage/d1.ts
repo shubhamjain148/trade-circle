@@ -11,6 +11,7 @@ import type {
   OAuthConnectionStatus,
   OAuthStateRow,
   Position,
+  PushSubscriptionRow,
   RawArchiveRow,
   SessionRow,
   SnapshotRow,
@@ -473,6 +474,70 @@ export class D1Storage implements Storage {
     await this.run(`DELETE FROM device_links WHERE token_hash = ?`, tokenHash);
   }
 
+  async upsertPushSubscription(s: PushSubscriptionRow): Promise<void> {
+    // A browser re-subscribing hands back the same endpoint, so this is the
+    // normal path rather than the exceptional one — and it clears failed_count,
+    // because a device that just proved it has a live endpoint is not failing.
+    await this.run(
+      `INSERT INTO push_subscriptions
+         (endpoint_hash, member_id, subscription_json, created_at, last_ok_at, failed_count)
+       VALUES (?, ?, ?, ?, ?, ?)
+       ON CONFLICT(endpoint_hash) DO UPDATE SET
+         member_id = excluded.member_id,
+         subscription_json = excluded.subscription_json,
+         failed_count = 0`,
+      s.endpointHash,
+      s.memberId,
+      s.subscriptionJson,
+      s.createdAt,
+      nul(s.lastOkAt),
+      s.failedCount,
+    );
+  }
+
+  async listPushSubscriptions(): Promise<PushSubscriptionRow[]> {
+    return (
+      await this.all(
+        `SELECT * FROM push_subscriptions ORDER BY created_at, endpoint_hash`,
+      )
+    ).map(toPushSubscription);
+  }
+
+  async getPushSubscription(
+    endpointHash: string,
+  ): Promise<PushSubscriptionRow | undefined> {
+    const row = await this.first(
+      `SELECT * FROM push_subscriptions WHERE endpoint_hash = ?`,
+      endpointHash,
+    );
+    return row ? toPushSubscription(row) : undefined;
+  }
+
+  async deletePushSubscription(endpointHash: string): Promise<void> {
+    await this.run(
+      `DELETE FROM push_subscriptions WHERE endpoint_hash = ?`,
+      endpointHash,
+    );
+  }
+
+  async markPushSubscriptionOk(endpointHash: string, at: string): Promise<void> {
+    await this.run(
+      `UPDATE push_subscriptions SET last_ok_at = ?, failed_count = 0
+       WHERE endpoint_hash = ?`,
+      at,
+      endpointHash,
+    );
+  }
+
+  async bumpPushSubscriptionFailure(endpointHash: string): Promise<number> {
+    await this.run(
+      `UPDATE push_subscriptions SET failed_count = failed_count + 1
+       WHERE endpoint_hash = ?`,
+      endpointHash,
+    );
+    return (await this.getPushSubscription(endpointHash))?.failedCount ?? 0;
+  }
+
   async createSession(session: SessionRow): Promise<void> {
     await this.run(
       `INSERT INTO sessions (token_hash, member_id, created_at, expires_at)
@@ -665,6 +730,17 @@ function toAccount(r: Row): AccountRow {
     provider: "indmoney",
     status: String(r.status) as AccountStatus,
     lastPolledAt: r.last_polled_at === null ? null : String(r.last_polled_at),
+  };
+}
+
+function toPushSubscription(r: Row): PushSubscriptionRow {
+  return {
+    endpointHash: String(r.endpoint_hash),
+    memberId: String(r.member_id),
+    subscriptionJson: String(r.subscription_json),
+    createdAt: String(r.created_at),
+    lastOkAt: r.last_ok_at === null ? null : String(r.last_ok_at),
+    failedCount: Number(r.failed_count),
   };
 }
 

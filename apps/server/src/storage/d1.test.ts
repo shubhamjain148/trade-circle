@@ -354,6 +354,40 @@ describe("D1Storage", () => {
     assert.deepEqual(latest?.tools, { tools: [{ name: "new" }] });
   });
 
+  test("push subscriptions upsert per endpoint and count their own failures", async () => {
+    const row = {
+      endpointHash: "h-phone",
+      memberId: "m1",
+      subscriptionJson: '{"endpoint":"https://push.example.net/phone"}',
+      createdAt: NOW,
+      // null, not undefined: the shim rejects undefined exactly as D1 does.
+      lastOkAt: null,
+      failedCount: 0,
+    };
+    await storage.upsertPushSubscription(row);
+    await storage.upsertPushSubscription({ ...row, endpointHash: "h-laptop" });
+    // Two devices, one member — the whole reason the endpoint is the key.
+    assert.equal((await storage.listPushSubscriptions()).length, 2);
+    assert.deepEqual(await storage.getPushSubscription("h-phone"), row);
+
+    assert.equal(await storage.bumpPushSubscriptionFailure("h-phone"), 1);
+    assert.equal(await storage.bumpPushSubscriptionFailure("h-phone"), 2);
+
+    // A success forgives the count; a re-subscribe would too.
+    await storage.markPushSubscriptionOk("h-phone", NOW);
+    const ok = await storage.getPushSubscription("h-phone");
+    assert.equal(ok?.failedCount, 0);
+    assert.equal(ok?.lastOkAt, NOW);
+
+    await storage.bumpPushSubscriptionFailure("h-laptop");
+    await storage.upsertPushSubscription({ ...row, endpointHash: "h-laptop" });
+    assert.equal((await storage.getPushSubscription("h-laptop"))?.failedCount, 0);
+
+    await storage.deletePushSubscription("h-phone");
+    assert.equal(await storage.getPushSubscription("h-phone"), undefined);
+    assert.equal((await storage.listPushSubscriptions()).length, 1);
+  });
+
   test("markPolled and setAccountStatus land on the account row", async () => {
     await storage.markPolled("a-m1", NOW);
     await storage.setAccountStatus("a-m1", "needs_reauth");
