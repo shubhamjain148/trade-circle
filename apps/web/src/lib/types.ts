@@ -19,6 +19,33 @@ export interface FeedEvent {
   detectedAt: string
 }
 
+/**
+ * One line of group chat. Always attributed by name: visibility governs what
+ * the watcher publishes about a portfolio, not what a friend says out loud.
+ */
+export interface ChatMessage {
+  id: string
+  memberId: string
+  authorName: string
+  body: string
+  createdAt: string
+}
+
+/** The group view is one list: what people said and what people did. */
+export type TimelineItem =
+  | ({ kind: "message" } & ChatMessage)
+  | ({ kind: "event" } & FeedEvent)
+
+/**
+ * GET /api/chat — oldest first, unlike /api/feed, because the composer sits at
+ * the bottom of it. `cursor` is the ordering key of the last item; hand it back
+ * as ?after= and an idle poll costs one empty page.
+ */
+export interface ChatPage {
+  items: TimelineItem[]
+  cursor: string
+}
+
 export type Visibility = "named" | "anonymous" | "paused"
 
 export interface Member {

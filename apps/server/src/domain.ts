@@ -59,6 +59,17 @@ export interface FeedEventRow {
   suppressReason: string | null;
 }
 
+/**
+ * One line of group chat. Deliberately thin: no threads, no edits, no reactions —
+ * the timeline it lands in is the feature, the message is just a row in it.
+ */
+export interface MessageRow {
+  id: string;
+  memberId: string;
+  body: string;
+  createdAt: string;
+}
+
 export interface RawArchiveRow {
   id: number;
   accountId: string;

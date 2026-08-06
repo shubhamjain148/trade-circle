@@ -8,8 +8,10 @@ import {
   type SessionEnv,
 } from "./auth/session.js";
 import { hashToken } from "./auth/vault.js";
+import { createChatApp } from "./chat.js";
 import type { Config } from "./config.js";
 import type { AccountRow, MemberRow } from "./domain.js";
+import { toFeedEvents } from "./feed.js";
 import { captureToolCatalog } from "./mcp/client.js";
 import {
   completeConnect,
@@ -20,7 +22,7 @@ import {
 import { nextRunAt } from "./poller/scheduler.js";
 import type { TickResult } from "./poller/tick.js";
 import type { Storage } from "./storage/index.js";
-import type { FeedEvent, Member } from "./types.js";
+import type { Member } from "./types.js";
 
 export interface ApiDeps {
   storage: Storage;
@@ -119,36 +121,14 @@ export function createApp({ storage, poll, config, mcp }: ApiDeps): Hono<Session
   // Group feed: everyone's events interleaved, newest first.
   // Individual feed: same log filtered by ?accountId= (member id or account id).
   app.get("/api/feed", async (c) => {
-    const filter = c.req.query("accountId");
     const [members, accounts, rows] = await Promise.all([
       storage.listMembers(),
       storage.listAccounts(),
       storage.listFeedEvents({ limit: 500 }),
     ]);
-    const memberById = new Map(members.map((m) => [m.id, m]));
-    const accountById = new Map(accounts.map((a) => [a.id, a]));
-    const wanted = filter ? resolveAccountIds(filter, accounts) : null;
-
-    const events: FeedEvent[] = [];
-    for (const row of rows) {
-      if (wanted && !wanted.has(row.accountId)) continue;
-      const account = accountById.get(row.accountId);
-      const member = account && memberById.get(account.memberId);
-      if (!member || member.visibility === "paused") continue;
-      events.push({
-        id: row.id,
-        accountId: member.id,
-        accountName:
-          member.visibility === "anonymous" ? "Someone in the group" : member.name,
-        type: row.type,
-        symbol: row.symbol,
-        instrumentName: row.instrumentName,
-        pctOfPortfolio: row.pctOfPortfolio,
-        ...(row.qtyChangePct === null ? {} : { qtyChangePct: row.qtyChangePct }),
-        detectedAt: row.detectedAt,
-      });
-    }
-    return c.json(events);
+    return c.json(
+      toFeedEvents(rows, members, accounts, c.req.query("accountId")),
+    );
   });
 
   // Poll status per account — what the scheduler did and when it goes again.
@@ -238,6 +218,9 @@ export function createApp({ storage, poll, config, mcp }: ApiDeps): Hono<Session
     return c.json(result);
   });
 
+  // Group chat + activity timeline. Session-gated inside; see src/chat.ts.
+  app.route("/", createChatApp({ storage }));
+
   return app;
 }
 
@@ -258,15 +241,6 @@ function accountStatus(
 
 function message(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
-}
-
-function resolveAccountIds(
-  filter: string,
-  accounts: AccountRow[],
-): Set<string> {
-  const direct = accounts.filter((a) => a.id === filter);
-  const byMember = accounts.filter((a) => a.memberId === filter);
-  return new Set((direct.length ? direct : byMember).map((a) => a.id));
 }
 
 function toMember(m: MemberRow): Member {

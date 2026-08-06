@@ -23,3 +23,31 @@ export interface Member {
   name: string;
   visibility: "named" | "anonymous" | "paused";
 }
+
+/**
+ * One line of group chat. Always attributed by name: visibility is a dial on
+ * what the *watcher* publishes about your portfolio, not on your own speech —
+ * an anonymous chat in a five-person WhatsApp replacement is just confusing.
+ */
+export interface ChatMessage {
+  id: string;
+  memberId: string;
+  authorName: string;
+  body: string;
+  createdAt: string;
+}
+
+/** The group timeline is one list: what people said and what people did. */
+export type TimelineItem =
+  | ({ kind: "message" } & ChatMessage)
+  | ({ kind: "event" } & FeedEvent);
+
+/**
+ * `cursor` is the ordering key of the newest item on the page ("<iso>|<id>").
+ * Hand it back as ?after= and the next read is just the tail — an idle poll
+ * returns `items: []` and the same cursor.
+ */
+export interface ChatPage {
+  items: TimelineItem[];
+  cursor: string;
+}

@@ -3,6 +3,7 @@ import type {
   FeedEventRow,
   InviteTokenRow,
   MemberRow,
+  MessageRow,
   OAuthConnectionRow,
   OAuthConnectionStatus,
   OAuthStateRow,
@@ -81,8 +82,14 @@ export interface Storage {
   listFeedEvents(opts?: {
     accountId?: string;
     includeSuppressed?: boolean;
+    /** Inclusive lower bound on detectedAt — the chat cursor's cheap poll. */
+    since?: string;
     limit?: number;
   }): Promise<FeedEventRow[]>;
+
+  insertMessage(message: MessageRow): Promise<void>;
+  /** Newest first, matching listFeedEvents; `since` is an inclusive lower bound. */
+  listMessages(opts?: { since?: string; limit?: number }): Promise<MessageRow[]>;
 
   archiveRaw(
     accountId: string,

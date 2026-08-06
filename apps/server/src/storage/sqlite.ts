@@ -7,6 +7,7 @@ import type {
   FeedEventRow,
   InviteTokenRow,
   MemberRow,
+  MessageRow,
   OAuthConnectionRow,
   OAuthConnectionStatus,
   OAuthStateRow,
@@ -79,6 +80,16 @@ CREATE TABLE IF NOT EXISTS feed_events (
 );
 CREATE INDEX IF NOT EXISTS feed_events_time ON feed_events(detected_at DESC);
 CREATE INDEX IF NOT EXISTS feed_events_acct_time ON feed_events(account_id, detected_at DESC);
+
+-- Group chat. Sorted with feed_events into one timeline by (time, id), so the
+-- ordering key has to be comparable across both tables: ISO strings, always.
+CREATE TABLE IF NOT EXISTS messages (
+  id         TEXT PRIMARY KEY,
+  member_id  TEXT NOT NULL REFERENCES members(id),
+  body       TEXT NOT NULL,
+  created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS messages_time ON messages(created_at DESC);
 
 CREATE TABLE IF NOT EXISTS raw_archive (
   id           INTEGER PRIMARY KEY,
@@ -358,6 +369,7 @@ export class SqliteStorage implements Storage {
     opts: {
       accountId?: string;
       includeSuppressed?: boolean;
+      since?: string;
       limit?: number;
     } = {},
   ): Promise<FeedEventRow[]> {
@@ -366,6 +378,12 @@ export class SqliteStorage implements Storage {
     if (opts.accountId) {
       where.push("account_id = ?");
       params.push(opts.accountId);
+    }
+    // Inclusive: the chat cursor breaks same-timestamp ties on id, so the
+    // boundary row has to survive the SQL and be filtered in the merge.
+    if (opts.since) {
+      where.push("detected_at >= ?");
+      params.push(opts.since);
     }
     if (!opts.includeSuppressed) where.push("suppressed = 0");
     const sql =
@@ -389,6 +407,34 @@ export class SqliteStorage implements Storage {
       detectedAt: String(r.detected_at),
       suppressed: Number(r.suppressed) === 1,
       suppressReason: r.suppress_reason === null ? null : String(r.suppress_reason),
+    }));
+  }
+
+  async insertMessage(message: MessageRow): Promise<void> {
+    this.db
+      .prepare(
+        `INSERT INTO messages (id, member_id, body, created_at) VALUES (?, ?, ?, ?)`,
+      )
+      .run(message.id, message.memberId, message.body, message.createdAt);
+  }
+
+  async listMessages(
+    opts: { since?: string; limit?: number } = {},
+  ): Promise<MessageRow[]> {
+    // Same shape as listFeedEvents — newest first, so the two lists merge
+    // without either side having to be re-sorted end to end.
+    const sql =
+      `SELECT * FROM messages` +
+      (opts.since ? ` WHERE created_at >= ?` : "") +
+      ` ORDER BY created_at DESC, id DESC LIMIT ?`;
+    const params: (string | number)[] = opts.since ? [opts.since] : [];
+    params.push(opts.limit ?? 200);
+    const rows = this.db.prepare(sql).all(...params) as Record<string, string>[];
+    return rows.map((r) => ({
+      id: r.id,
+      memberId: r.member_id,
+      body: r.body,
+      createdAt: r.created_at,
     }));
   }
 

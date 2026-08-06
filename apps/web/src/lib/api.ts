@@ -69,6 +69,13 @@ export const feedPath = (accountId?: string) =>
     ? `/api/feed?accountId=${encodeURIComponent(accountId)}`
     : "/api/feed"
 
+/**
+ * The group timeline. With a cursor this is the poll the tab runs every few
+ * seconds; without one it's the cold open.
+ */
+export const chatPath = (after?: string) =>
+  after ? `/api/chat?after=${encodeURIComponent(after)}` : "/api/chat"
+
 export const membersPath = "/api/members"
 export const mePath = "/api/me"
 export const sessionPath = "/api/auth/session"

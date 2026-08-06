@@ -11,7 +11,7 @@ import { useMembers } from "@/hooks/use-watcher-data"
 import { ApiError } from "@/lib/api"
 import type { Account, FeedView, Member } from "@/lib/types"
 import { BootView } from "@/views/boot-view"
-import { GroupFeedView } from "@/views/group-feed-view"
+import { GroupChatView } from "@/views/group-chat-view"
 import { JoinView } from "@/views/join-view"
 import { MemberFeedView } from "@/views/member-feed-view"
 import { SettingsView } from "@/views/settings-view"
@@ -97,7 +97,7 @@ function FeedScreen({
         <ConnectionNotice account={account} />
 
         {view.kind === "group" ? (
-          <GroupFeedView members={members} />
+          <GroupChatView members={members} member={member} />
         ) : (
           <MemberFeedView
             key={view.memberId}
