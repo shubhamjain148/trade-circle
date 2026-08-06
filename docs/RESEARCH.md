@@ -29,7 +29,7 @@ reasons *why* we don't do writes.
 |---|---|---|
 | Can our own backend (not Claude) speak MCP to INDmoney? | ✅ Yes | MCP is plain JSON-RPC over streamable-http; a dozen third-party OSS clients already drive the live INDmoney server. No AI model involved unless you wire one in. |
 | Can a server do the OAuth for each friend? | ✅ Yes, one browser login each | OAuth 2.1 + PKCE with **open, unauthenticated dynamic client registration** — no partner deal needed. No `client_credentials`, so each friend logs in once via browser (mobile + OTP + MPIN + consent screen). |
-| Will friends have to re-login constantly? | ✅ Probably not, still verifying | **Verified 2026-08-06:** access token TTL is exactly 1 hour, and a refresh token *was* issued on connect. Third-party client code documents silent refresh working in production. What's still open: whether the refresh token rotates and its own hard expiry — the first real refresh exercise happens ~1h after connect and hasn't been observed yet (§6a). |
+| Will friends have to re-login constantly? | ✅ No — silent refresh verified live | **Verified 2026-08-06:** access token TTL is exactly 1 hour; a refresh token is issued on connect; and **silent refresh was observed working in our own server** — a poll 7 minutes after expiry succeeded with no errors and minted a fresh 1-hour token, no human involved. Friends log in once. Only the refresh token's hard expiry (if any) remains unknown; it needs multi-day observation, and a failure would surface gracefully as a `needs_reauth` prompt in settings. |
 | Is it truly read-only? | ✅ Yes, by construction | Only two scopes exist: `portfolio:read` and `market:read` — **confirmed exactly these two were granted on a real consent screen, 2026-08-06.** No writable scope exists anywhere in the MCP. Worst case of a server compromise is a **confidentiality** breach, never a rogue trade. |
 | Does it cover US stocks? | ✅ Yes | Holdings span 16+ asset classes including US equities (INDmoney's flagship); market-data tools cover US tickers (up to 10 per call). Fractional shares are the norm on INDmoney US — **confirmed live**, `total_units` is fractional and there's no ticker field anywhere (only `investment_code`/name — use `lookup_ind_keys` to resolve). INDmoney also aggregates external-broker holdings (e.g. Zerodha) under the same `IND_STOCK` rows — the watcher sees more than INDmoney-native holdings. |
 | Is a notify-only friend group legally safe? | ✅ Comfortably | SEBI's advice-registration hook requires **fees + holding out to the public**; a free, closed group sharing *confirmed* holdings changes meets neither. All enforcement cases found involved money + a public audience. The sharp edges (algo framework, credential custody) attach only to order placement — which we've descoped. |
@@ -215,8 +215,11 @@ appendix 1 speculated, this is the answer; see its dated addendum for the pointe
   end-to-end. Scopes granted: exactly `portfolio:read market:read` — nothing broader was offered
   or requested.
 - **Access token TTL: exactly 1 hour.** `expires_at` on the token response was +1h from issuance.
-  A refresh token was issued. Rotation behavior and the refresh token's own hard expiry are **not
-  yet known** — silent refresh hasn't been exercised, since that first happens ~1h after connect.
+  A refresh token was issued. **Silent refresh verified later the same day**: a forced poll at
+  11:55 UTC — 7 minutes after the 11:48 expiry — succeeded with no errors and the vault showed a
+  fresh token (`expires_at` +1h, connection still `active`), with no human interaction. Only the
+  refresh token's own hard expiry remains unknown (multi-day observation; failure mode is a
+  graceful `needs_reauth` in settings).
 - **`tools/list`: 15 tools**, confirming appendix 1's "15 actually present" over the official
   page's 14. Names: `indian_stocks_sips`, `networth_snapshot`, `networth_allocation_breakdown`,
   `networth_holdings`, `get_indian_stocks_ohlc`, `get_indian_stocks_details`,
@@ -241,9 +244,10 @@ appendix 1 speculated, this is the answer; see its dated addendum for the pointe
   for coverage but means "INDmoney" in this doc really means "everything INDmoney can see," not
   just its own brokerage.
 
-**Still unresolved after this first contact:** refresh token rotation and hard expiry (exercise
-happens ~1h post-connect), rate-limit shape (never deliberately probed), and same-day settlement
-visibility (which tool/field shows a same-day US buy before T+1 settlement — not yet tested).
+**Still unresolved after this first contact:** the refresh token's hard expiry (silent refresh
+itself verified same-day — see above; whether the refresh token eventually dies needs multi-day
+observation), rate-limit shape (never deliberately probed), and same-day settlement visibility
+(which tool/field shows a same-day US buy before T+1 settlement — not yet tested).
 
 **Phase 1 — watch + notify (the product):** token vault, hourly poller (+ pre-open/post-close
 pulls), diff engine with corporate-action suppression, SQLite store, and the **in-app chat/
