@@ -17,6 +17,10 @@ export function parseHash(hash: string): Route {
     return { kind: "join", token: params.get("token") }
   }
 
+  if (/^#\/stats\/?$/.test(path)) {
+    return { kind: "stats" }
+  }
+
   if (/^#\/settings\/?$/.test(path)) {
     return {
       kind: "settings",
@@ -29,6 +33,7 @@ export function parseHash(hash: string): Route {
 }
 
 export const SETTINGS_HREF = "#/settings"
+export const STATS_HREF = "#/stats"
 export const FEED_HREF = "#/"
 
 export function useRoute(): Route {

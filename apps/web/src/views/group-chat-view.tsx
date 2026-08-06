@@ -29,6 +29,7 @@ export function GroupChatView({ members, member }: GroupChatViewProps) {
   const { refresh } = useSession()
   const {
     items,
+    reactions,
     isLoading,
     error,
     updatedAt,
@@ -36,6 +37,7 @@ export function GroupChatView({ members, member }: GroupChatViewProps) {
     typing,
     send,
     retry,
+    react,
     reload,
     notifyTyping,
   } = useChat(member)
@@ -85,10 +87,12 @@ export function GroupChatView({ members, member }: GroupChatViewProps) {
       <ChatTimeline
         items={items}
         memberId={member.id}
+        reactions={reactions}
         isLoading={isLoading}
         error={error}
         onReload={reload}
         onRetryMessage={retry}
+        onReact={react}
       />
 
       {/* One band, so the reserved typing line rides directly on the

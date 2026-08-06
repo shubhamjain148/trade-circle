@@ -1,11 +1,23 @@
 import * as React from "react"
 
-import { chatPath, chatSocketUrl, getJson, postJson } from "@/lib/api"
-import type {
-  ChatPage,
-  Member,
-  RoomServerMessage,
-  TimelineItem,
+import {
+  chatPath,
+  chatReactionsPath,
+  chatSocketUrl,
+  getJson,
+  postJson,
+  writeJson,
+} from "@/lib/api"
+import {
+  reactionKey,
+  type ChatPage,
+  type Member,
+  type ReactionItemKind,
+  type ReactionMap,
+  type ReactionSummary,
+  type ReactionUpdate,
+  type RoomServerMessage,
+  type TimelineItem,
 } from "@/lib/types"
 
 /** How long a message can be; mirrors MAX_BODY_LENGTH in apps/server/src/chat.ts. */
@@ -65,6 +77,8 @@ export interface TypingMember {
 
 export interface Chat {
   items: ChatItem[]
+  /** Keyed by reactionKey(); missing means "nobody has reacted to that item". */
+  reactions: ReactionMap
   /** True only before the first page lands — a poll failure never re-blanks it. */
   isLoading: boolean
   /** Set when the last sync failed; the timeline below it is still the truth. */
@@ -77,6 +91,13 @@ export interface Chat {
   typing: TypingMember[]
   send: (body: string) => void
   retry: (id: string) => void
+  /**
+   * Add or remove one of your reactions. Moves the pill immediately and reverts
+   * it if the write fails — there is no pending state for a reaction, because a
+   * pill that shows "maybe" is worse than one that briefly showed the wrong
+   * count and then corrected itself.
+   */
+  react: (kind: ReactionItemKind, id: string, emoji: string, on: boolean) => void
   reload: () => void
   /** Call on every keystroke; the throttle is in here, not in the composer. */
   notifyTyping: () => void
@@ -119,6 +140,92 @@ function settle(
   ]
 }
 
+/**
+ * Apply a batch of authoritative summaries. Every source — poll, socket, the
+ * toggle's own response — hands whole summaries per item, never deltas, so this
+ * is a shallow overwrite and applying the same batch twice changes nothing.
+ *
+ * Empty arrays are written, not skipped: an item whose last reaction was just
+ * removed arrives as `[]`, and dropping it would leave the pill on screen.
+ */
+function applyReactions(current: ReactionMap, incoming: ReactionMap): ReactionMap {
+  const keys = Object.keys(incoming)
+  if (keys.length === 0) return current
+  // Nothing actually moved (an inclusive delta re-sending its boundary item is
+  // the common case): keep the identity so nothing downstream re-renders.
+  if (keys.every((key) => sameSummaries(current[key], incoming[key]))) return current
+  return { ...current, ...incoming }
+}
+
+function sameSummaries(
+  a: ReactionSummary[] | undefined,
+  b: ReactionSummary[]
+): boolean {
+  if (a === undefined || a.length !== b.length) return false
+  return a.every((entry, i) => {
+    const other = b[i]
+    return (
+      entry.emoji === other.emoji &&
+      entry.count === other.count &&
+      entry.mine === other.mine &&
+      entry.who.length === other.who.length &&
+      entry.who.every((name, j) => name === other.who[j])
+    )
+  })
+}
+
+/**
+ * The optimistic half of a toggle: move the pill now, reconcile later.
+ *
+ * `you` is inserted into (or removed from) `who` rather than only bumping the
+ * count, because the names are what the pill's press-and-hold reveals — a
+ * count that moved without a name behind it would read as a bug the moment
+ * anyone looked.
+ */
+function toggleLocally(
+  summaries: ReactionSummary[] | undefined,
+  emoji: string,
+  you: string,
+  on: boolean
+): ReactionSummary[] {
+  const current = summaries ?? []
+  const existing = current.find((entry) => entry.emoji === emoji)
+
+  if (on) {
+    if (existing?.mine) return current
+    if (!existing) {
+      return [...current, { emoji, count: 1, mine: true, who: [you] }]
+    }
+    return current.map((entry) =>
+      entry.emoji === emoji
+        ? { ...entry, count: entry.count + 1, mine: true, who: [...entry.who, you] }
+        : entry
+    )
+  }
+
+  if (!existing?.mine) return current
+  // The last one out takes the pill with it.
+  if (existing.count <= 1) return current.filter((entry) => entry.emoji !== emoji)
+  return current.map((entry) =>
+    entry.emoji === emoji
+      ? {
+          ...entry,
+          count: entry.count - 1,
+          mine: false,
+          // One occurrence, not every match: two friends can share a first name,
+          // and the server's next summary is the one that settles it anyway.
+          who: withoutOne(entry.who, you),
+        }
+      : entry
+  )
+}
+
+function withoutOne(names: string[], name: string): string[] {
+  const at = names.indexOf(name)
+  if (at < 0) return names
+  return [...names.slice(0, at), ...names.slice(at + 1)]
+}
+
 /** Newest claim wins, and re-arms the four seconds. */
 function noteTyping(
   current: TypingMember[],
@@ -149,6 +256,7 @@ function noteTyping(
  */
 export function useChat(member: Member): Chat {
   const [items, setItems] = React.useState<ChatItem[]>([])
+  const [reactions, setReactions] = React.useState<ReactionMap>({})
   const [isLoading, setIsLoading] = React.useState(true)
   const [error, setError] = React.useState<Error | undefined>()
   const [updatedAt, setUpdatedAt] = React.useState<number | undefined>()
@@ -157,6 +265,21 @@ export function useChat(member: Member): Chat {
 
   // Cursor is a ref, not state: advancing it must not restart the poll loop.
   const cursor = React.useRef("")
+  /**
+   * The second cursor, and the reason reactions on old rows work at all. Kept
+   * separate from `cursor` because the two advance for different reasons: one
+   * tracks what has been *said*, the other what has been *reacted to*, and an
+   * hour-old message can move on the second axis long after it stopped moving
+   * on the first.
+   */
+  const reactionCursor = React.useRef("")
+  /**
+   * The same map as `reactions`, readable synchronously. The optimistic toggle
+   * has to know what was on screen *before* it moved anything so it can put it
+   * back on failure, and reading that out of a `setState` updater would be a
+   * side effect inside a function React is allowed to call twice.
+   */
+  const reactionsRef = React.useRef<ReactionMap>({})
   const inFlight = React.useRef(false)
   /** Consecutive failed syncs — the only input to the poll interval. */
   const failures = React.useRef(0)
@@ -167,17 +290,34 @@ export function useChat(member: Member): Chat {
   /** Re-arm the poll from now. Installed by the poll effect, called by the socket. */
   const poke = React.useRef<() => void>(() => {})
 
+  /** The one write path for reactions — ref and state move together, always. */
+  const applyReactionBatch = React.useCallback((incoming: ReactionMap) => {
+    const next = applyReactions(reactionsRef.current, incoming)
+    if (next === reactionsRef.current) return
+    reactionsRef.current = next
+    setReactions(next)
+  }, [])
+
   const sync = React.useCallback(async (signal?: AbortSignal) => {
     if (inFlight.current) return
     inFlight.current = true
 
     try {
-      const page = await getJson<ChatPage>(chatPath(cursor.current), signal)
+      const page = await getJson<ChatPage>(
+        chatPath(cursor.current, reactionCursor.current),
+        signal
+      )
       if (signal?.aborted) return
 
       cursor.current = page.cursor
       if (page.items.length > 0) {
         setItems((current) => merge(current, page.items))
+      }
+      // Tolerant of a server that predates this field: an old deploy answering
+      // a new tab leaves the pills alone rather than wiping them.
+      if (page.reactions) applyReactionBatch(page.reactions)
+      if (typeof page.reactionCursor === "string") {
+        reactionCursor.current = page.reactionCursor
       }
       failures.current = 0
       setError(undefined)
@@ -190,7 +330,10 @@ export function useChat(member: Member): Chat {
       inFlight.current = false
       setIsLoading(false)
     }
-  }, [])
+    // applyReactionBatch is stable (its own useCallback holds no dependencies),
+    // so naming it here does not make this callback churn — and a churning
+    // `sync` would restart the poll loop on every render.
+  }, [applyReactionBatch])
 
   React.useEffect(() => {
     const controller = new AbortController()
@@ -320,6 +463,17 @@ export function useChat(member: Member): Chat {
           return
         }
 
+        if (payload.type === "reactions") {
+          // Whole summaries, `mine` already resolved for this socket's member,
+          // through the same apply the poll uses. The reaction cursor is
+          // deliberately *not* advanced: the next poll re-delivers this and the
+          // overwrite is a no-op, which is the cheapest possible guarantee that
+          // a dropped frame heals instead of stranding a pill.
+          applyReactionBatch(payload.reactions)
+          setUpdatedAt(Date.now())
+          return
+        }
+
         if (payload.type === "typing") {
           // Your own other tab is not news, and the room already skips the
           // socket that sent the signal.
@@ -352,7 +506,8 @@ export function useChat(member: Member): Chat {
       socket.current = null
       current?.close()
     }
-  }, [member.id])
+    // Same note as `sync`: stable, so the socket is not reconnected for it.
+  }, [applyReactionBatch, member.id])
 
   // Typing claims expire on their own, so something has to notice. Only armed
   // while somebody is typing — an idle chat runs no timer at all.
@@ -435,6 +590,41 @@ export function useChat(member: Member): Chat {
     [post]
   )
 
+  /**
+   * The toggle. Optimistic, and revertible because the revert is exact: the
+   * summary that was on screen before the tap is captured and put back on
+   * failure, rather than the count being decremented a second time.
+   *
+   * The request itself is idempotent at both ends, so a tap that races the poll
+   * or the socket settles on the same row whichever lands last. The response is
+   * applied anyway — it is the authoritative summary and may carry a reaction
+   * someone else added in the same second.
+   */
+  const react = React.useCallback(
+    (kind: ReactionItemKind, id: string, emoji: string, on: boolean) => {
+      const key = reactionKey(kind, id)
+      const restore = reactionsRef.current[key] ?? []
+      const next = toggleLocally(restore, emoji, member.name, on)
+      // Already in the state being asked for — a double tap, or a stale render.
+      // Nothing to write, nothing to revert.
+      if (next === restore) return
+
+      applyReactionBatch({ [key]: next })
+
+      void writeJson<ReactionUpdate>(chatReactionsPath, on ? "PUT" : "DELETE", {
+        itemKind: kind,
+        itemId: id,
+        emoji,
+      }).then(
+        (update) => applyReactionBatch({ [key]: update.reactions }),
+        // Put back exactly what was there, rather than inverting the toggle: by
+        // now a poll may have moved this item, and re-inverting would compound.
+        () => applyReactionBatch({ [key]: restore })
+      )
+    },
+    [applyReactionBatch, member.name]
+  )
+
   // An explicit "try again" is a fresh start, not the next step of a backoff.
   const reload = React.useCallback(() => {
     failures.current = 0
@@ -464,6 +654,7 @@ export function useChat(member: Member): Chat {
 
   return {
     items,
+    reactions,
     isLoading,
     error,
     updatedAt,
@@ -471,6 +662,7 @@ export function useChat(member: Member): Chat {
     typing,
     send,
     retry,
+    react,
     reload,
     notifyTyping,
   }
