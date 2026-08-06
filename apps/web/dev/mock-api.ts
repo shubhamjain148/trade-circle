@@ -65,10 +65,60 @@ const ACCOUNTS: Record<Scenario, MockAccount | null> = {
 }
 
 const MEMBERS = [
-  { id: "m_rahul", name: "Rahul Menon", visibility: "named" },
-  { id: "m_aditi", name: "Aditi Sharma", visibility: "named" },
-  { id: "m_karthik", name: "Karthik Iyer", visibility: "anonymous" },
-  { id: "m_neha", name: "Neha Bhat", visibility: "paused" },
+  { id: "m_rahul", name: "Rahul Menon", visibility: "named", role: "admin" },
+  { id: "m_aditi", name: "Aditi Sharma", visibility: "named", role: "member" },
+  {
+    id: "m_karthik",
+    name: "Karthik Iyer",
+    visibility: "anonymous",
+    role: "member",
+  },
+  { id: "m_neha", name: "Neha Bhat", visibility: "paused", role: "member" },
+]
+
+/**
+ * The admin roster, so Settings' Group section can be driven visually too.
+ * Mutated in place by the handlers below — a mint/void within one scenario
+ * survives a reload, exactly like the account state above it.
+ */
+const ROSTER: {
+  id: string
+  name: string
+  role: string
+  visibility: string
+  connected: boolean
+  status: string
+  lastPolledAt: string | null
+  invite: { status: "pending" | "used"; at: string } | null
+}[] = [
+  {
+    ...MEMBERS[0],
+    connected: true,
+    status: "active",
+    lastPolledAt: hoursAgo(1.5),
+    invite: { status: "used", at: hoursAgo(700) },
+  },
+  {
+    ...MEMBERS[1],
+    connected: true,
+    status: "active",
+    lastPolledAt: hoursAgo(2),
+    invite: { status: "used", at: hoursAgo(600) },
+  },
+  {
+    ...MEMBERS[2],
+    connected: true,
+    status: "needs_reauth",
+    lastPolledAt: hoursAgo(31),
+    invite: { status: "used", at: hoursAgo(500) },
+  },
+  {
+    ...MEMBERS[3],
+    connected: false,
+    status: "not_connected",
+    lastPolledAt: null,
+    invite: { status: "pending", at: hoursAgo(3) },
+  },
 ]
 
 const ME = MEMBERS[0]
@@ -256,6 +306,59 @@ export function devMockApi(): Plugin | null {
         if (!state.signedIn) return json(res, 401, { error: "no_session" })
 
         if (path === "/api/members") return json(res, 200, MEMBERS)
+
+        // Admin roster + invites. ME is the admin in this mock, so the Group
+        // section is always reachable; flip ME's role to "member" to see the
+        // section vanish the way it does for everyone else.
+        if (path.startsWith("/api/admin/")) {
+          if (ME.role !== "admin") return json(res, 403, { error: "forbidden" })
+
+          if (path === "/api/admin/members" && method === "GET") {
+            return json(res, 200, ROSTER)
+          }
+
+          if (path === "/api/admin/members" && method === "POST") {
+            const body = await readBody(req)
+            const name = (
+              (JSON.parse(body || "{}") as { name?: string }).name ?? ""
+            ).trim()
+            if (!name) return json(res, 400, { error: "name_required" })
+
+            const member = {
+              id: name.toLowerCase().replace(/[^a-z0-9]+/g, "-"),
+              name,
+              role: "member",
+              visibility: "named",
+              connected: false,
+              status: "not_connected",
+              lastPolledAt: null,
+              invite: null,
+            }
+            ROSTER.push(member)
+            return json(res, 201, { member })
+          }
+
+          const inviteFor = /^\/api\/admin\/members\/([^/]+)\/invite$/.exec(path)
+          const target = inviteFor
+            ? ROSTER.find((m) => m.id === decodeURIComponent(inviteFor[1]))
+            : undefined
+          if (!target) return json(res, 404, { error: "unknown_member" })
+
+          if (method === "POST") {
+            target.invite = { status: "pending", at: new Date().toISOString() }
+            return json(res, 201, {
+              url: `http://localhost:5173/#/join?token=mock-${target.id}-${Date.now().toString(36)}`,
+            })
+          }
+
+          if (method === "DELETE") {
+            if (target.invite?.status !== "pending") {
+              return json(res, 404, { error: "no_pending_invite" })
+            }
+            target.invite = null
+            return json(res, 200, { voided: 1 })
+          }
+        }
 
         if (path === "/api/feed") {
           const accountId = url.searchParams.get("accountId")

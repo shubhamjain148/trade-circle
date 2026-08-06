@@ -72,6 +72,21 @@ export function connectionKey(account: Account | null): ConnectionKey {
   return account ? account.status : "none"
 }
 
+/**
+ * The admin roster's version of the same question. The server sends account
+ * states the feed has no presentation for ("not_connected" for a member who has
+ * never linked, "paused" for one the poller is leaving alone) — both mean the
+ * same thing to someone scanning the list: nothing is coming from them yet.
+ */
+export function rosterKey(status: string): ConnectionKey {
+  return status === "active" ||
+    status === "pending" ||
+    status === "needs_reauth" ||
+    status === "revoked"
+    ? status
+    : "none"
+}
+
 /** The two states worth interrupting the feed for. Everything else stays quiet. */
 export function needsAttention(account: Account | null): boolean {
   const key = connectionKey(account)

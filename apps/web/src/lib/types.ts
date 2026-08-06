@@ -48,10 +48,34 @@ export interface ChatPage {
 
 export type Visibility = "named" | "anonymous" | "paused"
 
+/**
+ * "admin" unlocks the group roster and invites in Settings. It grants no extra
+ * sight of anyone's holdings — the feed treats every member identically.
+ */
+export type MemberRole = "admin" | "member"
+
 export interface Member {
   id: string
   name: string
   visibility: Visibility
+  role: MemberRole
+}
+
+/**
+ * GET /api/admin/members — one row of the roster. `status` is the server's
+ * account/connection state and may carry values the feed never renders, so it
+ * is a plain string here and is narrowed by rosterKey() in lib/account.ts.
+ */
+export interface AdminMember {
+  id: string
+  name: string
+  role: MemberRole
+  visibility: Visibility
+  connected: boolean
+  status: string
+  lastPolledAt: string | null
+  /** "pending" — a link is out there unspent. "used" — they came in through one. */
+  invite: { status: "pending" | "used"; at: string } | null
 }
 
 /**

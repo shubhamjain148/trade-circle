@@ -4,6 +4,7 @@ import { Button, buttonVariants } from "@workspace/ui/components/button"
 import { cn } from "@workspace/ui/lib/utils"
 
 import { ConnectionCard } from "@/components/connection-card"
+import { GroupSection } from "@/components/group-section"
 import { useSession } from "@/components/session-provider"
 import { FEED_HREF, navigate, stripHashQuery } from "@/hooks/use-route"
 import { connectErrorMessage, VISIBILITY_COPY } from "@/lib/account"
@@ -72,6 +73,10 @@ export function SettingsView({
       <TrustSection />
 
       <VisibilitySection member={member} />
+
+      {/* Admin only, and absent — not disabled — for everyone else: a control
+          you can see but never use is a worse answer than no control. */}
+      {member.role === "admin" ? <GroupSection /> : null}
 
       <section className="border-t border-border pt-5">
         <Button

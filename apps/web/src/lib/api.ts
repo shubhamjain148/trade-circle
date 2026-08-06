@@ -97,3 +97,8 @@ export const connectPath = "/api/connect/indmoney"
  * never a fetch. Redirected OAuth in an XHR just yields an opaque failure.
  */
 export const connectStartPath = "/api/connect/indmoney/start"
+
+/** Admin only. Everything under here 403s for a plain member. */
+export const adminMembersPath = "/api/admin/members"
+export const adminInvitePath = (memberId: string) =>
+  `/api/admin/members/${encodeURIComponent(memberId)}/invite`

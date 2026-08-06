@@ -22,6 +22,26 @@ export interface Member {
   id: string;
   name: string;
   visibility: "named" | "anonymous" | "paused";
+  /** "admin" unlocks the group roster and invites; it grants no extra sight. */
+  role: "admin" | "member";
+}
+
+/**
+ * One row of the admin roster. Deliberately the same facts an admin would read
+ * off /api/accounts plus whether a link is outstanding — no holdings, no
+ * positions, nothing the feed wouldn't already show them.
+ */
+export interface AdminMember {
+  id: string;
+  name: string;
+  role: "admin" | "member";
+  visibility: "named" | "anonymous" | "paused";
+  connected: boolean;
+  /** Account/connection state, or "not_connected" before the first grant. */
+  status: string;
+  lastPolledAt: string | null;
+  /** "pending" — a link is out there unspent. "used" — they came in through one. */
+  invite: { status: "pending" | "used"; at: string } | null;
 }
 
 /**

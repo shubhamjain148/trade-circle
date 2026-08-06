@@ -57,10 +57,12 @@ const frames: Record<string, Position[][]> = {
   ],
 };
 
+// m1 is the admin: someone has to be able to hand out the first invite from
+// the UI, and a seeded group with no admin can only be fixed from a shell.
 const members = [
-  { id: "m1", name: "Shubham", visibility: "named" as const },
-  { id: "m2", name: "Rahul", visibility: "named" as const },
-  { id: "m3", name: "Anjali", visibility: "named" as const },
+  { id: "m1", name: "Shubham", visibility: "named" as const, role: "admin" as const },
+  { id: "m2", name: "Rahul", visibility: "named" as const, role: "member" as const },
+  { id: "m3", name: "Anjali", visibility: "named" as const, role: "member" as const },
 ];
 
 const DAY_MS = 86_400_000;

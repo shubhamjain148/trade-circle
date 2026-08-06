@@ -46,7 +46,15 @@ export function MemberSwitcher({
   const roster = members ?? []
   const tabs =
     view.kind === "member" && !roster.some((m) => m.id === view.memberId)
-      ? [...roster, { id: view.memberId, name: "Member", visibility: "named" } satisfies Member]
+      ? [
+          ...roster,
+          {
+            id: view.memberId,
+            name: "Member",
+            visibility: "named",
+            role: "member",
+          } satisfies Member,
+        ]
       : roster
 
   return (

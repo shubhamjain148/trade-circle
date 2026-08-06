@@ -6,10 +6,18 @@ import type { FeedEventType } from "./types.js";
 export type Visibility = "named" | "anonymous" | "paused";
 export type AccountStatus = "active" | "needs_reauth" | "paused" | "revoked";
 
+/**
+ * Everyone is a peer in the feed; "admin" only means "can hand out invites and
+ * add members". It buys no extra sight of anyone's holdings — the group is
+ * still a group of equals, and src/admin.ts is careful to stay that way.
+ */
+export type MemberRole = "admin" | "member";
+
 export interface MemberRow {
   id: string;
   name: string;
   visibility: Visibility;
+  role: MemberRole;
   createdAt: string;
 }
 

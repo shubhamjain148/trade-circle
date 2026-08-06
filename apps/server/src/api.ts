@@ -1,5 +1,6 @@
 import { Hono } from "hono";
 import { logger } from "hono/logger";
+import { createAdminApp } from "./admin.js";
 import {
   clearSession,
   currentMember,
@@ -221,6 +222,9 @@ export function createApp({ storage, poll, config, mcp }: ApiDeps): Hono<Session
   // Group chat + activity timeline. Session-gated inside; see src/chat.ts.
   app.route("/", createChatApp({ storage }));
 
+  // Roster + invites. Session- and role-gated inside; see src/admin.ts.
+  app.route("/", createAdminApp({ storage, config }));
+
   return app;
 }
 
@@ -244,5 +248,5 @@ function message(err: unknown): string {
 }
 
 function toMember(m: MemberRow): Member {
-  return { id: m.id, name: m.name, visibility: m.visibility };
+  return { id: m.id, name: m.name, visibility: m.visibility, role: m.role };
 }
