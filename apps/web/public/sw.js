@@ -66,6 +66,15 @@ self.addEventListener("activate", (event) => {
   )
 })
 
+/**
+ * Every read ignores Vary. The asset server sends `Vary: Origin`, and a
+ * precached entry is stored from a worker-issued request that carries no Origin
+ * header — so a `<script crossorigin>` asking for the very same URL would miss
+ * the cache and, offline, fail outright. These entries are keyed by URL and
+ * nothing else.
+ */
+const MATCH = { ignoreVary: true }
+
 /** Only 200s from our own origin are worth keeping. */
 function isCacheable(response) {
   return (
@@ -83,14 +92,14 @@ async function networkFirst(request) {
     }
     return response
   } catch (error) {
-    const cached = await caches.match(SHELL)
+    const cached = await caches.match(SHELL, MATCH)
     if (cached) return cached
     throw error
   }
 }
 
 async function cacheFirst(request, { revalidate = false } = {}) {
-  const cached = await caches.match(request)
+  const cached = await caches.match(request, MATCH)
 
   const fromNetwork = fetch(request)
     .then(async (response) => {
