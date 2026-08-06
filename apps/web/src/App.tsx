@@ -6,12 +6,13 @@ import { ConnectionNotice } from "@/components/connection-notice"
 import { MemberSwitcher } from "@/components/member-switcher"
 import { useSession } from "@/components/session-provider"
 import { feedHref } from "@/hooks/use-feed-route"
-import { navigate, useRoute } from "@/hooks/use-route"
+import { navigate, STATS_HREF, useRoute } from "@/hooks/use-route"
 import { useMembers } from "@/hooks/use-watcher-data"
 import { ApiError } from "@/lib/api"
-import type { Account, FeedView, Member } from "@/lib/types"
+import { GROUP_VIEW, type Account, type FeedView, type Member } from "@/lib/types"
 import { BootView } from "@/views/boot-view"
 import { GroupChatView } from "@/views/group-chat-view"
+import { GroupStatsView } from "@/views/group-stats-view"
 import { JoinView } from "@/views/join-view"
 import { MemberFeedView } from "@/views/member-feed-view"
 import { SettingsView } from "@/views/settings-view"
@@ -57,15 +58,25 @@ export function App() {
     )
   }
 
+  // Stats is a peer of the feeds, not a screen of its own: same shell, same
+  // switcher, so the tab row never disappears under someone mid-scan.
+  if (route.kind === "stats") {
+    return (
+      <FeedScreen view={GROUP_VIEW} stats member={member} account={account} />
+    )
+  }
+
   return <FeedScreen view={route.view} member={member} account={account} />
 }
 
 function FeedScreen({
   view,
+  stats = false,
   member,
   account,
 }: {
   view: FeedView
+  stats?: boolean
   member: Member
   account: Account | null
 }) {
@@ -74,7 +85,7 @@ function FeedScreen({
 
   // The chat is a viewport-tall column with its own scroller; the member feeds
   // are ordinary documents. The shell has to know which one it is holding.
-  const chat = view.kind === "group"
+  const chat = !stats && view.kind === "group"
 
   // A session that expires while the tab is open shows up as a 401 on the
   // next fetch. Send it back through /api/me rather than letting the feed
@@ -93,6 +104,8 @@ function FeedScreen({
           isLoading={isLoadingMembers}
           view={view}
           onViewChange={(next) => navigate(feedHref(next))}
+          isStats={stats}
+          onStats={() => navigate(STATS_HREF)}
         />
       }
     >
@@ -103,7 +116,9 @@ function FeedScreen({
       >
         <ConnectionNotice account={account} />
 
-        {chat ? (
+        {stats ? (
+          <GroupStatsView />
+        ) : view.kind === "group" ? (
           <GroupChatView members={members} member={member} />
         ) : (
           <MemberFeedView

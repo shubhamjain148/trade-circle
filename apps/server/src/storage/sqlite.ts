@@ -16,6 +16,9 @@ import type {
   Position,
   PushSubscriptionRow,
   RawArchiveRow,
+  ReactionItemKind,
+  ReactionRow,
+  ReactionTarget,
   SessionRow,
   SnapshotRow,
   StoredPosition,
@@ -24,6 +27,21 @@ import type {
 } from "../domain.js";
 import type { FeedEventType } from "../types.js";
 import type { Storage } from "./index.js";
+
+/**
+ * Targets per `(item_kind, item_id) IN (…)` read. Two bound parameters each, so
+ * forty is eighty — comfortably inside D1's hundred-parameter ceiling, which is
+ * the tighter of the two runtimes and therefore the one that sets the number.
+ */
+const TARGET_CHUNK = 40;
+
+function chunkTargets(targets: ReactionTarget[]): ReactionTarget[][] {
+  const chunks: ReactionTarget[][] = [];
+  for (let i = 0; i < targets.length; i += TARGET_CHUNK) {
+    chunks.push(targets.slice(i, i + TARGET_CHUNK));
+  }
+  return chunks;
+}
 
 const SCHEMA = `
 PRAGMA journal_mode = WAL;
@@ -98,6 +116,28 @@ CREATE TABLE IF NOT EXISTS messages (
   created_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS messages_time ON messages(created_at DESC);
+
+-- Reactions on either half of that timeline; see migrations/0004_reactions.sql
+-- for why item_id is polymorphic and carries no foreign key, and why the touch
+-- log next to it is what makes a cursor poll notice a 🚀 on an old row.
+CREATE TABLE IF NOT EXISTS reactions (
+  item_kind  TEXT NOT NULL CHECK (item_kind IN ('message','event')),
+  item_id    TEXT NOT NULL,
+  member_id  TEXT NOT NULL REFERENCES members(id),
+  emoji      TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  PRIMARY KEY (item_kind, item_id, member_id, emoji)
+);
+CREATE INDEX IF NOT EXISTS reactions_item ON reactions(item_kind, item_id);
+CREATE INDEX IF NOT EXISTS reactions_member ON reactions(member_id);
+
+CREATE TABLE IF NOT EXISTS reaction_activity (
+  item_kind  TEXT NOT NULL CHECK (item_kind IN ('message','event')),
+  item_id    TEXT NOT NULL,
+  touched_at TEXT NOT NULL,
+  PRIMARY KEY (item_kind, item_id)
+);
+CREATE INDEX IF NOT EXISTS reaction_activity_time ON reaction_activity(touched_at DESC);
 
 CREATE TABLE IF NOT EXISTS raw_archive (
   id           INTEGER PRIMARY KEY,
@@ -188,6 +228,36 @@ CREATE TABLE IF NOT EXISTS tool_catalog (
   tools_json  TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS tool_catalog_acct ON tool_catalog(account_id, captured_at DESC);
+`;
+
+/**
+ * Last snapshot of each UTC day in a window, newest day first.
+ *
+ * The day key is `substr(taken_at, 1, 10)` — taken_at is always a full ISO-8601
+ * UTC string (the poller stamps `new Date().toISOString()`), so the first ten
+ * characters *are* the date and no date function is needed. UTC rather than IST
+ * on purpose: the bucket has to be stable and identical on Node and on Workers,
+ * and US market hours land in the same UTC day for an IST evening anyway.
+ *
+ * ROW_NUMBER rather than `MAX(taken_at) GROUP BY` because two passes can share a
+ * timestamp; ordering by (taken_at, id) picks exactly one row per day, always.
+ * Duplicated verbatim in d1.ts, as every other statement in this codebase is —
+ * the two drivers keep their own SQL and a shared test holds them to the same
+ * behaviour.
+ */
+export const DAILY_SNAPSHOTS_SQL = `
+SELECT id, account_id, taken_at, payload_json FROM (
+  SELECT id, account_id, taken_at, payload_json,
+         ROW_NUMBER() OVER (
+           PARTITION BY substr(taken_at, 1, 10)
+           ORDER BY taken_at DESC, id DESC
+         ) AS rn
+  FROM snapshots
+  WHERE account_id = ? AND taken_at >= ?
+)
+WHERE rn = 1
+ORDER BY taken_at DESC
+LIMIT ?
 `;
 
 export const defaultDbPath = process.env.DB_PATH ?? "./data/watcher.db";
@@ -315,23 +385,33 @@ export class SqliteStorage implements Storage {
     };
   }
 
+  async listDailySnapshots(
+    accountId: string,
+    since: string,
+    limit: number,
+  ): Promise<SnapshotRow[]> {
+    const rows = this.db
+      .prepare(DAILY_SNAPSHOTS_SQL)
+      .all(accountId, since, limit) as Record<string, string | number>[];
+    // Read newest-first so LIMIT keeps the recent end; handed back oldest-first
+    // because that is the order a series is drawn in.
+    return rows.reverse().map(toSnapshot);
+  }
+
   async getCurrentPositions(accountId: string): Promise<StoredPosition[]> {
     const rows = this.db
       .prepare(
         `SELECT * FROM positions_current WHERE account_id = ? ORDER BY instrument_id`,
       )
       .all(accountId) as Record<string, string | number>[];
-    return rows.map((r) => ({
-      accountId: String(r.account_id),
-      instrumentId: String(r.instrument_id),
-      symbol: String(r.symbol),
-      name: String(r.name),
-      qty: Number(r.qty),
-      avgCost: Number(r.avg_cost),
-      mktValue: Number(r.mkt_value),
-      pctOfPortfolio: Number(r.pct_of_portfolio),
-      updatedAt: String(r.updated_at),
-    }));
+    return rows.map(toStoredPositionRow);
+  }
+
+  async listCurrentPositions(): Promise<StoredPosition[]> {
+    const rows = this.db
+      .prepare(`SELECT * FROM positions_current ORDER BY account_id, instrument_id`)
+      .all() as Record<string, string | number>[];
+    return rows.map(toStoredPositionRow);
   }
 
   async replaceCurrentPositions(
@@ -471,6 +551,84 @@ export class SqliteStorage implements Storage {
       body: r.body,
       createdAt: r.created_at,
     }));
+  }
+
+  async insertReaction(r: ReactionRow): Promise<void> {
+    // DO NOTHING rather than DO UPDATE: the first tap owns created_at, so the
+    // `who` list stays in the order people actually piled on even if a second
+    // tab replays the same PUT.
+    this.db
+      .prepare(
+        `INSERT INTO reactions (item_kind, item_id, member_id, emoji, created_at)
+         VALUES (?, ?, ?, ?, ?)
+         ON CONFLICT(item_kind, item_id, member_id, emoji) DO NOTHING`,
+      )
+      .run(r.itemKind, r.itemId, r.memberId, r.emoji, r.createdAt);
+    this.touchReactions(r.itemKind, r.itemId, r.createdAt);
+  }
+
+  async deleteReaction(
+    key: ReactionTarget & { memberId: string; emoji: string },
+    at: string,
+  ): Promise<void> {
+    this.db
+      .prepare(
+        `DELETE FROM reactions
+          WHERE item_kind = ? AND item_id = ? AND member_id = ? AND emoji = ?`,
+      )
+      .run(key.kind, key.id, key.memberId, key.emoji);
+    // Unconditional, even when nothing was deleted: a client that thinks it has
+    // a pill it does not have is exactly who this touch is for.
+    this.touchReactions(key.kind, key.id, at);
+  }
+
+  /** The delta log behind ?reactedAfter=. Newest touch wins; see the migration. */
+  private touchReactions(kind: string, id: string, at: string): void {
+    this.db
+      .prepare(
+        `INSERT INTO reaction_activity (item_kind, item_id, touched_at) VALUES (?, ?, ?)
+         ON CONFLICT(item_kind, item_id) DO UPDATE SET touched_at = excluded.touched_at`,
+      )
+      .run(kind, id, at);
+  }
+
+  async listReactionsFor(targets: ReactionTarget[]): Promise<ReactionRow[]> {
+    const rows: ReactionRow[] = [];
+    for (const chunk of chunkTargets(targets)) {
+      const placeholders = chunk.map(() => "(?, ?)").join(", ");
+      const params = chunk.flatMap((t) => [t.kind, t.id]);
+      const found = this.db
+        .prepare(
+          `SELECT * FROM reactions WHERE (item_kind, item_id) IN (${placeholders})
+            ORDER BY created_at, member_id, emoji`,
+        )
+        .all(...params) as Record<string, string>[];
+      for (const r of found) rows.push(toReaction(r));
+    }
+    return rows;
+  }
+
+  async listReactionActivity(
+    opts: { since?: string; limit?: number } = {},
+  ): Promise<{ target: ReactionTarget; touchedAt: string }[]> {
+    const sql =
+      `SELECT * FROM reaction_activity` +
+      (opts.since ? ` WHERE touched_at >= ?` : "") +
+      ` ORDER BY touched_at, item_kind, item_id LIMIT ?`;
+    const params: (string | number)[] = opts.since ? [opts.since] : [];
+    params.push(opts.limit ?? 200);
+    const rows = this.db.prepare(sql).all(...params) as Record<string, string>[];
+    return rows.map((r) => ({
+      target: { kind: r.item_kind as ReactionItemKind, id: r.item_id },
+      touchedAt: r.touched_at,
+    }));
+  }
+
+  async latestReactionActivityAt(): Promise<string | undefined> {
+    const row = this.db
+      .prepare(`SELECT MAX(touched_at) AS at FROM reaction_activity`)
+      .get() as { at: string | null } | undefined;
+    return row?.at ?? undefined;
   }
 
   async archiveRaw(
@@ -896,6 +1054,16 @@ function toMember(r: Record<string, string>): MemberRow {
   };
 }
 
+function toReaction(r: Record<string, string>): ReactionRow {
+  return {
+    itemKind: r.item_kind as ReactionItemKind,
+    itemId: r.item_id,
+    memberId: r.member_id,
+    emoji: r.emoji,
+    createdAt: r.created_at,
+  };
+}
+
 function toAccount(r: Record<string, string | null>): AccountRow {
   return {
     id: String(r.id),
@@ -903,6 +1071,31 @@ function toAccount(r: Record<string, string | null>): AccountRow {
     provider: "indmoney",
     status: String(r.status) as AccountStatus,
     lastPolledAt: r.last_polled_at ?? null,
+  };
+}
+
+function toSnapshot(r: Record<string, string | number>): SnapshotRow {
+  return {
+    id: Number(r.id),
+    accountId: String(r.account_id),
+    takenAt: String(r.taken_at),
+    positions: JSON.parse(String(r.payload_json)) as Position[],
+  };
+}
+
+function toStoredPositionRow(
+  r: Record<string, string | number>,
+): StoredPosition {
+  return {
+    accountId: String(r.account_id),
+    instrumentId: String(r.instrument_id),
+    symbol: String(r.symbol),
+    name: String(r.name),
+    qty: Number(r.qty),
+    avgCost: Number(r.avg_cost),
+    mktValue: Number(r.mkt_value),
+    pctOfPortfolio: Number(r.pct_of_portfolio),
+    updatedAt: String(r.updated_at),
   };
 }
 

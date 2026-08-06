@@ -79,6 +79,25 @@ export async function postJson<T>(path: string, body: unknown): Promise<T> {
   return (await response.json()) as T
 }
 
+/**
+ * PUT and DELETE that both carry a body and both return one. Reactions are the
+ * only caller: the verb is the whole difference between adding and removing,
+ * and the response is the item's recomputed summary either way.
+ */
+export async function writeJson<T>(
+  path: string,
+  method: "PUT" | "DELETE",
+  body: unknown
+): Promise<T> {
+  const response = await request(path, {
+    method,
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  })
+
+  return (await response.json()) as T
+}
+
 export async function patchJson<T>(path: string, body: unknown): Promise<T> {
   const response = await request(path, {
     method: "PATCH",
@@ -119,9 +138,27 @@ export const feedPath = (accountId?: string) =>
 /**
  * The group timeline. With a cursor this is the poll the tab runs every few
  * seconds; without one it's the cold open.
+ *
+ * `reactedAfter` is a second, independent cursor and has to be: the item cursor
+ * runs past everything already seen, so without this one a 🚀 landing on
+ * yesterday's message would never reach a poll. Both are optional; sending
+ * neither is the cold open.
  */
-export const chatPath = (after?: string) =>
-  after ? `/api/chat?after=${encodeURIComponent(after)}` : "/api/chat"
+export const chatPath = (after?: string, reactedAfter?: string) => {
+  const query = new URLSearchParams()
+  if (after) query.set("after", after)
+  if (reactedAfter) query.set("reactedAfter", reactedAfter)
+  const suffix = query.toString()
+  return suffix ? `/api/chat?${suffix}` : "/api/chat"
+}
+
+/**
+ * One tap. PUT adds, DELETE removes, and both are idempotent — which is what
+ * lets the pill move optimistically and the request be retried without anyone
+ * counting twice. The item is named in the body rather than the path because
+ * "which item" is two fields (kind and id), not a resource segment.
+ */
+export const chatReactionsPath = "/api/chat/reactions"
 
 /**
  * Live delivery for the same timeline. Same origin as everything else, so the
@@ -145,6 +182,23 @@ export const membersPath = "/api/members"
  */
 export const memberPositionsPath = (memberId: string) =>
   `/api/members/${encodeURIComponent(memberId)}/positions`
+
+/**
+ * What the group holds in common — overlap, concentration, solo picks. Built
+ * from the same table as the holdings panel and under the same rule: weights
+ * only, and paused members are not in it (apps/server/src/stats.ts).
+ */
+export const groupStatsPath = "/api/group/stats"
+
+/**
+ * The same holdings over the last 30 days, one weight series per instrument —
+ * the sparklines in the panel. A sibling of memberPositionsPath rather than a
+ * flag on it: the page's first read stays a small indexed query, and this one (a month
+ * of snapshot payloads, thinned to one per day in SQL) lands a beat later
+ * without holding the rows up. Weights only, same as ever.
+ */
+export const memberPositionsHistoryPath = (memberId: string) =>
+  `/api/members/${encodeURIComponent(memberId)}/positions/history`
 
 export const mePath = "/api/me"
 export const visibilityPath = "/api/me/visibility"

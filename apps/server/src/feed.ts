@@ -14,6 +14,28 @@ import type { FeedEvent } from "./types.js";
  */
 export const ANONYMOUS_NAME = "Someone in the group";
 
+/** How the group is allowed to see one member, once visibility has been applied. */
+export interface VisibleMember {
+  id: string;
+  /** Their name, or ANONYMOUS_NAME. Never both, never the real one when hidden. */
+  name: string;
+  anonymous: boolean;
+}
+
+/**
+ * The visibility rule itself, lifted out of `toFeedEvents` so anything else that
+ * publishes per-member facts (see src/stats.ts) applies the same one rather than
+ * writing its own `visibility === "paused"` check that can drift.
+ *
+ * `undefined` means "held back entirely" — a paused member is not a member with
+ * a blank name, they are absent, and every caller has to handle that as absence.
+ */
+export function visibleAs(member: MemberRow): VisibleMember | undefined {
+  if (member.visibility === "paused") return undefined;
+  const anonymous = member.visibility === "anonymous";
+  return { id: member.id, name: anonymous ? ANONYMOUS_NAME : member.name, anonymous };
+}
+
 export function toFeedEvents(
   rows: FeedEventRow[],
   members: MemberRow[],
@@ -29,11 +51,12 @@ export function toFeedEvents(
     if (wanted && !wanted.has(row.accountId)) continue;
     const account = accountById.get(row.accountId);
     const member = account && memberById.get(account.memberId);
-    if (!member || member.visibility === "paused") continue;
+    const visible = member && visibleAs(member);
+    if (!visible) continue;
     events.push({
       id: row.id,
-      accountId: member.id,
-      accountName: member.visibility === "anonymous" ? ANONYMOUS_NAME : member.name,
+      accountId: visible.id,
+      accountName: visible.name,
       type: row.type,
       symbol: row.symbol,
       instrumentName: row.instrumentName,

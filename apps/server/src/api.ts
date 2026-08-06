@@ -25,6 +25,7 @@ import {
 import { nextRunAt } from "./poller/scheduler.js";
 import { createPositionsApp } from "./positions.js";
 import { createPushApp } from "./push.js";
+import { createStatsApp } from "./stats.js";
 import type { TickResult } from "./poller/tick.js";
 import type { Room } from "./room.js";
 import type { Storage } from "./storage/index.js";
@@ -300,6 +301,9 @@ export function createApp({
 
   // One member's current holdings. Session-gated inside; see src/positions.ts.
   app.route("/", createPositionsApp({ storage }));
+
+  // What the group holds in common. Session-gated inside; see src/stats.ts.
+  app.route("/", createStatsApp({ storage }));
 
   // Web Push subscriptions, one row per browser. Session-gated inside; see
   // src/push.ts. Sending is not here — it hangs off the poll tick.

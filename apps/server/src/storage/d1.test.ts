@@ -388,6 +388,77 @@ describe("D1Storage", () => {
     assert.equal((await storage.listPushSubscriptions()).length, 1);
   });
 
+  test("reactions round-trip through the polymorphic key", async () => {
+    // migrations/0004_reactions.sql, exercised against the real statements: the
+    // same member, the same item, two emoji, and a trade band alongside a
+    // message — the whole reason item_id carries no foreign key.
+    const at = "2026-03-01T10:00:00.000Z";
+    for (const [kind, id, emoji] of [
+      ["message", "msg-1", "🚀"],
+      ["message", "msg-1", "💀"],
+      ["event", "evt-1", "🚀"],
+    ] as const) {
+      await storage.insertReaction({
+        itemKind: kind,
+        itemId: id,
+        memberId: "m1",
+        emoji,
+        createdAt: at,
+      });
+    }
+
+    // Idempotent on the whole tuple — and the batch means the touch went with it.
+    await storage.insertReaction({
+      itemKind: "message",
+      itemId: "msg-1",
+      memberId: "m1",
+      emoji: "🚀",
+      createdAt: "2026-03-01T10:05:00.000Z",
+    });
+
+    const rows = await storage.listReactionsFor([
+      { kind: "message", id: "msg-1" },
+      { kind: "event", id: "evt-1" },
+    ]);
+    assert.equal(rows.length, 3);
+    // The first tap owns created_at; the replay did not rewrite it.
+    assert.equal(
+      rows.find((r) => r.itemId === "msg-1" && r.emoji === "🚀")?.createdAt,
+      at,
+    );
+
+    // One item, one activity row, stamped by the most recent touch.
+    const activity = await storage.listReactionActivity({ since: at });
+    assert.deepEqual(
+      activity.map((a) => [a.target.kind, a.target.id]),
+      [
+        ["event", "evt-1"],
+        ["message", "msg-1"],
+      ],
+    );
+    assert.equal(await storage.latestReactionActivityAt(), "2026-03-01T10:05:00.000Z");
+
+    await storage.deleteReaction(
+      { kind: "message", id: "msg-1", memberId: "m1", emoji: "🚀" },
+      "2026-03-01T11:00:00.000Z",
+    );
+    assert.deepEqual(
+      (await storage.listReactionsFor([{ kind: "message", id: "msg-1" }])).map(
+        (r) => r.emoji,
+      ),
+      ["💀"],
+    );
+    // A removal is a change, and only the touch log can carry it to a poll.
+    assert.equal(await storage.latestReactionActivityAt(), "2026-03-01T11:00:00.000Z");
+
+    // Deleting what is not there is not an error, and still says "re-read me".
+    await storage.deleteReaction(
+      { kind: "message", id: "msg-1", memberId: "m1", emoji: "🚀" },
+      "2026-03-01T12:00:00.000Z",
+    );
+    assert.equal(await storage.latestReactionActivityAt(), "2026-03-01T12:00:00.000Z");
+  });
+
   test("markPolled and setAccountStatus land on the account row", async () => {
     await storage.markPolled("a-m1", NOW);
     await storage.setAccountStatus("a-m1", "needs_reauth");

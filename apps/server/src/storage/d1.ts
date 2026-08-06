@@ -13,6 +13,9 @@ import type {
   Position,
   PushSubscriptionRow,
   RawArchiveRow,
+  ReactionItemKind,
+  ReactionRow,
+  ReactionTarget,
   SessionRow,
   SnapshotRow,
   StoredPosition,
@@ -46,6 +49,41 @@ import type { Storage } from "./index.js";
 type Param = string | number | null;
 
 type Row = Record<string, unknown>;
+
+/**
+ * Targets per `(item_kind, item_id) IN (…)` read. Two bound parameters each, so
+ * forty is eighty — inside D1's hundred-parameter ceiling with room to spare.
+ */
+const TARGET_CHUNK = 40;
+
+function chunkTargets(targets: ReactionTarget[]): ReactionTarget[][] {
+  const chunks: ReactionTarget[][] = [];
+  for (let i = 0; i < targets.length; i += TARGET_CHUNK) {
+    chunks.push(targets.slice(i, i + TARGET_CHUNK));
+  }
+  return chunks;
+}
+
+/**
+ * Last snapshot of each UTC day in a window, newest day first. Copied verbatim
+ * from sqlite.ts (which documents the design) rather than imported: that module
+ * opens `node:sqlite` at load, and importing it here would drag the whole thing
+ * into the Workers bundle for the sake of one string.
+ */
+const DAILY_SNAPSHOTS_SQL = `
+SELECT id, account_id, taken_at, payload_json FROM (
+  SELECT id, account_id, taken_at, payload_json,
+         ROW_NUMBER() OVER (
+           PARTITION BY substr(taken_at, 1, 10)
+           ORDER BY taken_at DESC, id DESC
+         ) AS rn
+  FROM snapshots
+  WHERE account_id = ? AND taken_at >= ?
+)
+WHERE rn = 1
+ORDER BY taken_at DESC
+LIMIT ?
+`;
 
 export class D1Storage implements Storage {
   constructor(private readonly db: D1Database) {}
@@ -166,22 +204,36 @@ export class D1Storage implements Storage {
     };
   }
 
+  /** See DAILY_SNAPSHOTS_SQL in sqlite.ts for why the query looks like this. */
+  async listDailySnapshots(
+    accountId: string,
+    since: string,
+    limit: number,
+  ): Promise<SnapshotRow[]> {
+    const rows = await this.all(DAILY_SNAPSHOTS_SQL, accountId, since, limit);
+    // Read newest-first so LIMIT keeps the recent end; handed back oldest-first
+    // because that is the order a series is drawn in.
+    return rows.reverse().map((r) => ({
+      id: Number(r.id),
+      accountId: String(r.account_id),
+      takenAt: String(r.taken_at),
+      positions: JSON.parse(String(r.payload_json)) as Position[],
+    }));
+  }
+
   async getCurrentPositions(accountId: string): Promise<StoredPosition[]> {
     const rows = await this.all(
       `SELECT * FROM positions_current WHERE account_id = ? ORDER BY instrument_id`,
       accountId,
     );
-    return rows.map((r) => ({
-      accountId: String(r.account_id),
-      instrumentId: String(r.instrument_id),
-      symbol: String(r.symbol),
-      name: String(r.name),
-      qty: Number(r.qty),
-      avgCost: Number(r.avg_cost),
-      mktValue: Number(r.mkt_value),
-      pctOfPortfolio: Number(r.pct_of_portfolio),
-      updatedAt: String(r.updated_at),
-    }));
+    return rows.map(toStoredPositionRow);
+  }
+
+  async listCurrentPositions(): Promise<StoredPosition[]> {
+    const rows = await this.all(
+      `SELECT * FROM positions_current ORDER BY account_id, instrument_id`,
+    );
+    return rows.map(toStoredPositionRow);
   }
 
   async replaceCurrentPositions(
@@ -310,6 +362,90 @@ export class D1Storage implements Storage {
       body: String(r.body),
       createdAt: String(r.created_at),
     }));
+  }
+
+  async insertReaction(r: ReactionRow): Promise<void> {
+    // One batch, one implicit transaction: the row and its touch land together
+    // or not at all, so a client can never be told to re-read an item whose
+    // reaction did not actually get written.
+    await this.db.batch([
+      this.db
+        .prepare(
+          `INSERT INTO reactions (item_kind, item_id, member_id, emoji, created_at)
+           VALUES (?, ?, ?, ?, ?)
+           ON CONFLICT(item_kind, item_id, member_id, emoji) DO NOTHING`,
+        )
+        .bind(r.itemKind, r.itemId, r.memberId, r.emoji, r.createdAt),
+      this.touchStatement(r.itemKind, r.itemId, r.createdAt),
+    ]);
+  }
+
+  async deleteReaction(
+    key: ReactionTarget & { memberId: string; emoji: string },
+    at: string,
+  ): Promise<void> {
+    await this.db.batch([
+      this.db
+        .prepare(
+          `DELETE FROM reactions
+            WHERE item_kind = ? AND item_id = ? AND member_id = ? AND emoji = ?`,
+        )
+        .bind(key.kind, key.id, key.memberId, key.emoji),
+      // Unconditional, even when nothing was deleted: a client that thinks it
+      // has a pill it does not have is exactly who this touch is for.
+      this.touchStatement(key.kind, key.id, at),
+    ]);
+  }
+
+  /** The delta log behind ?reactedAfter=. Newest touch wins; see the migration. */
+  private touchStatement(kind: string, id: string, at: string) {
+    return this.db
+      .prepare(
+        `INSERT INTO reaction_activity (item_kind, item_id, touched_at) VALUES (?, ?, ?)
+         ON CONFLICT(item_kind, item_id) DO UPDATE SET touched_at = excluded.touched_at`,
+      )
+      .bind(kind, id, at);
+  }
+
+  async listReactionsFor(targets: ReactionTarget[]): Promise<ReactionRow[]> {
+    const rows: ReactionRow[] = [];
+    for (const chunk of chunkTargets(targets)) {
+      const placeholders = chunk.map(() => "(?, ?)").join(", ");
+      const params = chunk.flatMap((t) => [t.kind, t.id]);
+      const found = await this.all(
+        `SELECT * FROM reactions WHERE (item_kind, item_id) IN (${placeholders})
+          ORDER BY created_at, member_id, emoji`,
+        ...params,
+      );
+      for (const r of found) rows.push(toReaction(r));
+    }
+    return rows;
+  }
+
+  async listReactionActivity(
+    opts: { since?: string; limit?: number } = {},
+  ): Promise<{ target: ReactionTarget; touchedAt: string }[]> {
+    const sql =
+      `SELECT * FROM reaction_activity` +
+      (opts.since ? ` WHERE touched_at >= ?` : "") +
+      ` ORDER BY touched_at, item_kind, item_id LIMIT ?`;
+    const params: Param[] = opts.since ? [opts.since] : [];
+    params.push(opts.limit ?? 200);
+    const rows = await this.all(sql, ...params);
+    return rows.map((r) => ({
+      target: {
+        kind: String(r.item_kind) as ReactionItemKind,
+        id: String(r.item_id),
+      },
+      touchedAt: String(r.touched_at),
+    }));
+  }
+
+  async latestReactionActivityAt(): Promise<string | undefined> {
+    const row = await this.first(
+      `SELECT MAX(touched_at) AS at FROM reaction_activity`,
+    );
+    return row?.at == null ? undefined : String(row.at);
   }
 
   async archiveRaw(
@@ -723,6 +859,16 @@ function toMember(r: Row): MemberRow {
   };
 }
 
+function toReaction(r: Row): ReactionRow {
+  return {
+    itemKind: String(r.item_kind) as ReactionItemKind,
+    itemId: String(r.item_id),
+    memberId: String(r.member_id),
+    emoji: String(r.emoji),
+    createdAt: String(r.created_at),
+  };
+}
+
 function toAccount(r: Row): AccountRow {
   return {
     id: String(r.id),
@@ -730,6 +876,20 @@ function toAccount(r: Row): AccountRow {
     provider: "indmoney",
     status: String(r.status) as AccountStatus,
     lastPolledAt: r.last_polled_at === null ? null : String(r.last_polled_at),
+  };
+}
+
+function toStoredPositionRow(r: Row): StoredPosition {
+  return {
+    accountId: String(r.account_id),
+    instrumentId: String(r.instrument_id),
+    symbol: String(r.symbol),
+    name: String(r.name),
+    qty: Number(r.qty),
+    avgCost: Number(r.avg_cost),
+    mktValue: Number(r.mkt_value),
+    pctOfPortfolio: Number(r.pct_of_portfolio),
+    updatedAt: String(r.updated_at),
   };
 }
 

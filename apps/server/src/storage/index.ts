@@ -11,6 +11,8 @@ import type {
   Position,
   PushSubscriptionRow,
   RawArchiveRow,
+  ReactionRow,
+  ReactionTarget,
   SessionRow,
   SnapshotRow,
   StoredPosition,
@@ -105,8 +107,33 @@ export interface Storage {
     positions: Position[],
   ): Promise<void>;
   latestSnapshot(accountId: string): Promise<SnapshotRow | undefined>;
+  /**
+   * One snapshot per UTC day — the last pass of each day — from `since`
+   * onwards, oldest first, at most `limit` days.
+   *
+   * Daily, in SQL, because the alternative is shipping every poll of the last
+   * month out of the database and thinning it in JavaScript: snapshots hold a
+   * whole portfolio payload each, the poller runs hourly during US hours, and
+   * a month of that is hundreds of rows and megabytes of JSON to parse for a
+   * chart 44 pixels wide. The window and the cap are both enforced here so no
+   * caller can ask for unbounded history by forgetting to.
+   *
+   * `limit` keeps the *newest* days when there are more buckets than asked for;
+   * a truncated window that dropped today would be a lie about the present.
+   */
+  listDailySnapshots(
+    accountId: string,
+    since: string,
+    limit: number,
+  ): Promise<SnapshotRow[]>;
 
   getCurrentPositions(accountId: string): Promise<StoredPosition[]>;
+  /**
+   * Every account's current positions in one read. The group stats page needs
+   * the whole table at once; doing it per account would be a query per friend
+   * for a screen whose entire subject is the comparison between them.
+   */
+  listCurrentPositions(): Promise<StoredPosition[]>;
   replaceCurrentPositions(
     accountId: string,
     positions: StoredPosition[],
@@ -125,6 +152,40 @@ export interface Storage {
   insertMessage(message: MessageRow): Promise<void>;
   /** Newest first, matching listFeedEvents; `since` is an inclusive lower bound. */
   listMessages(opts?: { since?: string; limit?: number }): Promise<MessageRow[]>;
+
+  /**
+   * Add one reaction. Idempotent on the whole tuple — tapping 🚀 twice from two
+   * tabs is one row, not an error — and stamps reaction_activity either way, so
+   * a no-op write still tells other clients to re-read (they will see no change,
+   * which is correct and costs one small row).
+   */
+  insertReaction(reaction: ReactionRow): Promise<void>;
+  /** Remove one reaction. Idempotent: deleting what isn't there is not an error. */
+  deleteReaction(
+    key: ReactionTarget & { memberId: string; emoji: string },
+    at: string,
+  ): Promise<void>;
+  /**
+   * Every reaction on these items, oldest tap first — `who` reads as the order
+   * people piled on. Chunked internally, so the caller may pass a whole page.
+   */
+  listReactionsFor(targets: ReactionTarget[]): Promise<ReactionRow[]>;
+  /**
+   * Items whose reactions changed at or after `since`, oldest touch first.
+   *
+   * Inclusive, matching listMessages/listFeedEvents, and safe to be inclusive
+   * because what the caller does with the answer is recompute a whole summary:
+   * re-delivering the boundary item costs one repeated (identical) summary and
+   * removes any chance of stepping over a second item stamped in the same
+   * millisecond. Without `since` this is the whole log — used by nothing but
+   * tests, which is why it is capped like everything else.
+   */
+  listReactionActivity(opts?: {
+    since?: string;
+    limit?: number;
+  }): Promise<{ target: ReactionTarget; touchedAt: string }[]>;
+  /** The newest touch in the group, or undefined before anyone has ever reacted. */
+  latestReactionActivityAt(): Promise<string | undefined>;
 
   archiveRaw(
     accountId: string,
