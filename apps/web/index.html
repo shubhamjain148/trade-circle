@@ -2,9 +2,46 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <link rel="icon" type="image/svg+xml" href="/vite.svg" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+
+    <!-- viewport-fit=cover lets the page paint under the notch and the home
+         indicator; app-shell.tsx pays the safe-area insets back as padding.
+         user-scalable is deliberately left alone — pinch-zoom stays available,
+         and the iOS focus-zoom it would have suppressed is handled by keeping
+         form controls at 16px (see globals.css). -->
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0, viewport-fit=cover"
+    />
+
     <title>indmoney·watcher</title>
+    <meta
+      name="description"
+      content="What the group is holding. Read-only feed of each other's US-stock positions."
+    />
+
+    <link rel="icon" type="image/svg+xml" href="/icon.svg" />
+    <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png" />
+    <link rel="manifest" href="/manifest.webmanifest" />
+
+    <!-- The app defaults to dark whatever the OS says, so the browser chrome
+         is pinned to the dark background token rather than keyed to
+         prefers-color-scheme. Matches manifest theme_color. -->
+    <meta name="theme-color" content="#101713" />
+    <meta name="color-scheme" content="dark light" />
+
+    <!-- iOS home-screen launch. black-translucent puts the page under the
+         status bar; without the safe-area padding in the shell the header
+         would sit beneath the clock. -->
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta
+      name="apple-mobile-web-app-status-bar-style"
+      content="black-translucent"
+    />
+    <meta name="apple-mobile-web-app-title" content="IND Watcher" />
+
+    <!-- Private group tool. Nothing here belongs in an index. -->
+    <meta name="robots" content="noindex, nofollow" />
   </head>
   <body>
     <div id="root"></div>

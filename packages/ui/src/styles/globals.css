@@ -121,4 +121,41 @@
   [role="button"]:not(:disabled) {
     cursor: pointer;
   }
+
+  html {
+    /* Landscape on iOS otherwise inflates body copy on its own initiative. */
+    -webkit-text-size-adjust: 100%;
+    text-size-adjust: 100%;
+  }
+
+  body {
+    /* No grey flash behind taps — the app has its own pressed states, and the
+       flash is what makes a web view read as a web view. */
+    -webkit-tap-highlight-color: transparent;
+    /* Stops the whole page rubber-banding behind the chat. The message
+       scroller already contains its own overscroll; this covers the rest. */
+    overscroll-behavior-y: none;
+  }
+
+  /* Long-pressing a control should do nothing; long-pressing a message should
+     still offer Copy, so text keeps its callout. */
+  button,
+  a,
+  [role="button"] {
+    -webkit-touch-callout: none;
+  }
+}
+
+/*
+ * Unlayered on purpose. iOS Safari zooms the viewport when a focused field is
+ * under 16px, and the composer's `text-sm` is a utility — anything inside
+ * @layer base would lose to it. Touch pointers only, so the desktop type scale
+ * is untouched.
+ */
+@media (pointer: coarse) {
+  input,
+  textarea,
+  select {
+    font-size: max(16px, 1em);
+  }
 }
