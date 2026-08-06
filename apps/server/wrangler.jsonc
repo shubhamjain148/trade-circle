@@ -1,0 +1,62 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "indmoney-watcher",
+  "main": "src/worker.ts",
+  "compatibility_date": "2026-08-06",
+
+  // Required, not optional. Five modules import node:crypto synchronously —
+  // src/chat.ts (randomUUID), src/diff/index.ts, src/mcp/normalize.ts,
+  // src/poller/source.ts, src/poller/tick.ts and src/auth/vault.ts (hashToken) —
+  // and WebCrypto has no synchronous digest to swap them onto. node:crypto is
+  // fully supported on Workers under this flag.
+  "compatibility_flags": ["nodejs_compat"],
+
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "indmoney-watcher",
+      // Filled in by `wrangler d1 create indmoney-watcher` — see docs/DEPLOYMENT.md.
+      "database_id": "REPLACE_WITH_D1_DATABASE_ID",
+      "migrations_dir": "./migrations"
+    }
+  ],
+
+  // The Vite build output of apps/web. `run_worker_first` keeps /api/* on the
+  // Worker; everything else is served straight from the asset store, and an
+  // unknown path renders index.html so the hash router can take over.
+  "assets": {
+    "directory": "../web/dist",
+    "binding": "ASSETS",
+    "not_found_handling": "single-page-application",
+    // "/__scheduled" is `wrangler dev --test-scheduled`'s hook for firing the
+    // cron handler by hand. Without it here the asset router answers first and
+    // the cron is untestable locally. Inert in production — Cloudflare invokes
+    // scheduled() directly, and a browser hitting the path gets index.html.
+    "run_worker_first": ["/api/*", "/__scheduled"]
+  },
+
+  // The slots poller/scheduler.ts would have picked, in UTC: pre-open 13:00,
+  // the US session hourly from 13:30 to 20:30, and post-close 21:15. Weekdays
+  // only. Three triggers against a free-plan allowance of five.
+  "triggers": {
+    "crons": ["0 13 * * 1-5", "30 13-20 * * 1-5", "15 21 * * 1-5"]
+  },
+
+  "vars": {
+    "MCP_CLIENT_NAME": "indmoney-watcher"
+    // MCP_BASE_URL is deliberately NOT here. A key present in `vars` wins over
+    // the same key in .dev.vars, so declaring it would make `wrangler dev`
+    // unable to point at a local fake and every local connect attempt would
+    // reach the real INDmoney authorization server and register a DCR client
+    // there. src/worker.ts defaults it to https://mcp.indmoney.com/mcp instead,
+    // which is what production wants anyway.
+    //
+    // APP_URL is set per-deploy; see docs/DEPLOYMENT.md.
+    // APP_SECRET is a secret, never a var: `wrangler secret put APP_SECRET`.
+  },
+
+  "observability": {
+    "enabled": true,
+    "head_sampling_rate": 1
+  }
+}

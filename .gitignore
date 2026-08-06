@@ -10,3 +10,10 @@ build/
 *.log
 coverage/
 apps/server/data/
+
+# Cloudflare Workers local state (miniflare D1, asset cache)
+.wrangler/
+.dev.vars
+.dev.vars.*
+!.dev.vars.example
+apps/server/worker-configuration.d.ts

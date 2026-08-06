@@ -37,7 +37,7 @@ export function createAuthProvider(deps: McpDeps, accountId: string): AuthProvid
       if (isExpired(connection) && connection.refreshTokenEnc) {
         return refreshConnection(deps, accountId);
       }
-      return deps.vault.decrypt(connection.accessTokenEnc);
+      return await deps.vault.decrypt(connection.accessTokenEnc);
     },
     async onUnauthorized() {
       try {

@@ -38,6 +38,10 @@ export interface Storage {
     tokenHash: string,
     at: string,
   ): Promise<InviteTokenRow | "used" | undefined>;
+  /** Every link ever minted, oldest first. Hashes only — nothing here signs anyone in. */
+  listInvites(): Promise<InviteTokenRow[]>;
+  /** Voids a member's unspent links; returns how many. Spent ones are history and stay. */
+  deletePendingInvites(memberId: string): Promise<number>;
 
   createSession(session: SessionRow): Promise<void>;
   getSession(tokenHash: string, now: string): Promise<SessionRow | undefined>;

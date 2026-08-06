@@ -37,6 +37,7 @@ before(async () => {
     id: "m1",
     name: "Shubham",
     visibility: "named",
+    role: "admin",
     createdAt: new Date().toISOString(),
   });
   config = loadConfig({
@@ -79,7 +80,7 @@ describe("invite and session", () => {
     });
     assert.equal(res.status, 200);
     assert.deepEqual(await res.json(), {
-      member: { id: "m1", name: "Shubham", visibility: "named" },
+      member: { id: "m1", name: "Shubham", visibility: "named", role: "admin" },
     });
 
     const setCookie = res.headers.get("set-cookie") ?? "";
@@ -142,13 +143,13 @@ describe("connect flow", () => {
     const connection = await storage.getOAuthConnection("a-m1");
     assert.ok(connection);
     assert.equal(connection.status, "active");
-    assert.match(connection.accessTokenEnc, /^v1\./);
+    assert.match(connection.accessTokenEnc, /^v2\./);
     assert.ok(connection.refreshTokenEnc);
-    assert.ok(vault.decrypt(connection.accessTokenEnc).length > 0);
-    assert.throws(() => new Vault("wrong-secret").decrypt(connection.accessTokenEnc));
+    assert.ok((await vault.decrypt(connection.accessTokenEnc)).length > 0);
+    await assert.rejects(() => new Vault("wrong-secret").decrypt(connection.accessTokenEnc));
 
     // client_info must be persisted or the SDK cannot refresh (appendix 1 §1.3).
-    const clientInfo = vault.decryptJson<{ client_id: string; client_secret: string }>(
+    const clientInfo = await vault.decryptJson<{ client_id: string; client_secret: string }>(
       connection.clientInfoJsonEnc,
     );
     assert.ok(clientInfo.client_id);
@@ -227,7 +228,7 @@ describe("polling through McpPortfolioSource", () => {
 describe("refresh", () => {
   test("an expired access token is refreshed and the rotated refresh token persisted", async () => {
     const before = (await storage.getOAuthConnection("a-m1"))!;
-    const oldRefresh = vault.decrypt(before.refreshTokenEnc!);
+    const oldRefresh = await vault.decrypt(before.refreshTokenEnc!);
 
     // Backdate the stored expiry so token() refreshes proactively.
     await storage.upsertOAuthConnection({
@@ -243,7 +244,7 @@ describe("refresh", () => {
 
     const after = (await storage.getOAuthConnection("a-m1"))!;
     assert.equal(after.status, "active");
-    const newRefresh = vault.decrypt(after.refreshTokenEnc!);
+    const newRefresh = await vault.decrypt(after.refreshTokenEnc!);
     assert.notEqual(newRefresh, oldRefresh, "rotation persisted");
     assert.ok(fake.tokenGrants.some((g) => g.grant === "refresh_token"));
     assert.ok(after.expiresAt && Date.parse(after.expiresAt) > Date.now());

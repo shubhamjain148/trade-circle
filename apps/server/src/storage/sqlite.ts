@@ -6,6 +6,7 @@ import type {
   AccountStatus,
   FeedEventRow,
   InviteTokenRow,
+  MemberRole,
   MemberRow,
   MessageRow,
   OAuthConnectionRow,
@@ -26,10 +27,15 @@ const SCHEMA = `
 PRAGMA journal_mode = WAL;
 PRAGMA foreign_keys = ON;
 
+-- role is additive: fresh databases get it here, older ones get it from the
+-- guarded ALTER in init() below. No CHECK on it for that reason — SQLite can
+-- add a defaulted column but not a constrained one, and two definitions of the
+-- same column that disagree is worse than none.
 CREATE TABLE IF NOT EXISTS members (
   id          TEXT PRIMARY KEY,
   name        TEXT NOT NULL,
   visibility  TEXT NOT NULL CHECK (visibility IN ('named','anonymous','paused')),
+  role        TEXT NOT NULL DEFAULT 'member',
   created_at  TEXT NOT NULL
 );
 
@@ -170,6 +176,19 @@ export class SqliteStorage implements Storage {
 
   async init(): Promise<void> {
     this.db.exec(SCHEMA);
+    this.addColumn("members", "role", `TEXT NOT NULL DEFAULT 'member'`);
+  }
+
+  /**
+   * Idempotent ALTER for databases created before a column existed. SQLite has
+   * no ADD COLUMN IF NOT EXISTS, so the table_info read is the guard.
+   */
+  private addColumn(table: string, column: string, definition: string): void {
+    const columns = this.db
+      .prepare(`SELECT name FROM pragma_table_info(?)`)
+      .all(table) as { name: string }[];
+    if (columns.some((c) => c.name === column)) return;
+    this.db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
   }
 
   async close(): Promise<void> {
@@ -179,35 +198,25 @@ export class SqliteStorage implements Storage {
   async upsertMember(m: MemberRow): Promise<void> {
     this.db
       .prepare(
-        `INSERT INTO members (id, name, visibility, created_at) VALUES (?, ?, ?, ?)
-         ON CONFLICT(id) DO UPDATE SET name = excluded.name, visibility = excluded.visibility`,
+        `INSERT INTO members (id, name, visibility, role, created_at) VALUES (?, ?, ?, ?, ?)
+         ON CONFLICT(id) DO UPDATE SET name = excluded.name, visibility = excluded.visibility,
+           role = excluded.role`,
       )
-      .run(m.id, m.name, m.visibility, m.createdAt);
+      .run(m.id, m.name, m.visibility, m.role, m.createdAt);
   }
 
   async listMembers(): Promise<MemberRow[]> {
     const rows = this.db
       .prepare(`SELECT * FROM members ORDER BY created_at, id`)
       .all() as Record<string, string>[];
-    return rows.map((r) => ({
-      id: r.id,
-      name: r.name,
-      visibility: r.visibility as Visibility,
-      createdAt: r.created_at,
-    }));
+    return rows.map(toMember);
   }
 
   async getMember(id: string): Promise<MemberRow | undefined> {
     const r = this.db.prepare(`SELECT * FROM members WHERE id = ?`).get(id) as
       | Record<string, string>
       | undefined;
-    if (!r) return undefined;
-    return {
-      id: r.id,
-      name: r.name,
-      visibility: r.visibility as Visibility,
-      createdAt: r.created_at,
-    };
+    return r ? toMember(r) : undefined;
   }
 
   async upsertAccount(a: AccountRow): Promise<void> {
@@ -502,6 +511,29 @@ export class SqliteStorage implements Storage {
     };
   }
 
+  async listInvites(): Promise<InviteTokenRow[]> {
+    const rows = this.db
+      .prepare(`SELECT * FROM invite_tokens ORDER BY created_at, token_hash`)
+      .all() as Record<string, string | null>[];
+    return rows.map((r) => ({
+      tokenHash: String(r.token_hash),
+      memberId: String(r.member_id),
+      createdAt: String(r.created_at),
+      usedAt: r.used_at ?? null,
+    }));
+  }
+
+  /**
+   * Voids every unspent link for a member and reports how many died. Used
+   * links are left alone — they are the record of how someone got in.
+   */
+  async deletePendingInvites(memberId: string): Promise<number> {
+    const res = this.db
+      .prepare(`DELETE FROM invite_tokens WHERE member_id = ? AND used_at IS NULL`)
+      .run(memberId);
+    return Number(res.changes);
+  }
+
   async createSession(session: SessionRow): Promise<void> {
     this.db
       .prepare(
@@ -701,6 +733,18 @@ function toConnection(r: Record<string, string | null>): OAuthConnectionRow {
     createdAt: String(r.created_at),
     updatedAt: String(r.updated_at),
     status: String(r.status) as OAuthConnectionStatus,
+  };
+}
+
+function toMember(r: Record<string, string>): MemberRow {
+  return {
+    id: r.id,
+    name: r.name,
+    visibility: r.visibility as Visibility,
+    // Rows written before the column existed read back as NULL under the
+    // ALTER's default only for *new* writes, so default defensively here too.
+    role: (r.role as MemberRole) ?? "member",
+    createdAt: r.created_at,
   };
 }
 

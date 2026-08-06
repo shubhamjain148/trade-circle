@@ -9,8 +9,15 @@
     "start": "node dist/index.js",
     "seed": "tsx src/seed.ts",
     "invite": "tsx src/invite.ts",
+    "promote": "tsx src/promote.ts",
     "test": "NODE_ENV=test node --import tsx --test \"src/**/*.test.ts\"",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "cf:dev": "wrangler dev --test-scheduled",
+    "cf:migrate:local": "wrangler d1 migrations apply indmoney-watcher --local",
+    "cf:migrate": "wrangler d1 migrations apply indmoney-watcher --remote",
+    "cf:types": "wrangler types",
+    "cf:check": "wrangler deploy --dry-run",
+    "cf:deploy": "pnpm --filter web build && wrangler deploy"
   },
   "dependencies": {
     "@hono/node-server": "^1.19.8",
@@ -18,10 +25,12 @@
     "hono": "^4.11.9"
   },
   "devDependencies": {
+    "@cloudflare/workers-types": "^5.20260804.1",
     "@modelcontextprotocol/server": "2.0.0",
     "@types/node": "^24",
     "tsx": "^4.20.9",
     "typescript": "~6",
+    "wrangler": "^4.119.0",
     "zod": "^4.4.3"
   }
 }

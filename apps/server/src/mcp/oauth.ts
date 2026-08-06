@@ -75,11 +75,11 @@ export async function startConnect(
   await storage.createOAuthState({
     state,
     memberId,
-    codeVerifierEnc: vault.encrypt(codeVerifier),
+    codeVerifierEnc: await vault.encrypt(codeVerifier),
     issuer: metadata.issuer,
     authorizationServerUrl: info.authorizationServerUrl,
     authorizationServerMetaJson: JSON.stringify(metadata),
-    clientInfoJsonEnc: vault.encryptJson(clientInfo),
+    clientInfoJsonEnc: await vault.encryptJson(clientInfo),
     resource: resource.href,
     createdAt: now.toISOString(),
     expiresAt: new Date(now.getTime() + config.oauthStateTtlMs).toISOString(),
@@ -105,7 +105,7 @@ export async function completeConnect(
   const metadata = JSON.parse(
     pending.authorizationServerMetaJson,
   ) as AuthorizationServerMetadata;
-  const clientInfo = vault.decryptJson<OAuthClientInformationFull>(
+  const clientInfo = await vault.decryptJson<OAuthClientInformationFull>(
     pending.clientInfoJsonEnc,
   );
 
@@ -114,7 +114,7 @@ export async function completeConnect(
     clientInformation: clientInfo,
     authorizationCode: params.code,
     iss: params.iss,
-    codeVerifier: vault.decrypt(pending.codeVerifierEnc),
+    codeVerifier: await vault.decrypt(pending.codeVerifierEnc),
     redirectUri: redirectUri(config),
     resource: pending.resource ? new URL(pending.resource) : undefined,
     fetchFn: deps.fetchFn,
@@ -125,9 +125,9 @@ export async function completeConnect(
   await storage.upsertOAuthConnection({
     accountId,
     provider: "indmoney",
-    accessTokenEnc: vault.encrypt(tokens.access_token),
+    accessTokenEnc: await vault.encrypt(tokens.access_token),
     refreshTokenEnc: tokens.refresh_token
-      ? vault.encrypt(tokens.refresh_token)
+      ? await vault.encrypt(tokens.refresh_token)
       : null,
     expiresAt: expiryOf(tokens, now),
     scope: tokens.scope ?? null,
@@ -158,14 +158,14 @@ export async function refreshConnection(
   const metadata = JSON.parse(
     connection.authorizationServerMetaJson,
   ) as AuthorizationServerMetadata;
-  const clientInfo = vault.decryptJson<OAuthClientInformationFull>(
+  const clientInfo = await vault.decryptJson<OAuthClientInformationFull>(
     connection.clientInfoJsonEnc,
   );
 
   const tokens = await refreshAuthorization(metadata.issuer, {
     metadata,
     clientInformation: clientInfo,
-    refreshToken: vault.decrypt(connection.refreshTokenEnc),
+    refreshToken: await vault.decrypt(connection.refreshTokenEnc),
     resource: resourceOf(deps),
     fetchFn: deps.fetchFn,
   });
@@ -173,9 +173,9 @@ export async function refreshConnection(
   const now = new Date();
   await storage.upsertOAuthConnection({
     ...connection,
-    accessTokenEnc: vault.encrypt(tokens.access_token),
+    accessTokenEnc: await vault.encrypt(tokens.access_token),
     refreshTokenEnc: tokens.refresh_token
-      ? vault.encrypt(tokens.refresh_token)
+      ? await vault.encrypt(tokens.refresh_token)
       : connection.refreshTokenEnc,
     expiresAt: expiryOf(tokens, now),
     scope: tokens.scope ?? connection.scope,
@@ -204,12 +204,12 @@ export async function revokeConnection(
     const endpoint = (metadata as Record<string, unknown>).revocation_endpoint;
     if (typeof endpoint !== "string") throw new Error("no revocation endpoint");
     {
-      const clientInfo = vault.decryptJson<OAuthClientInformationFull>(
+      const clientInfo = await vault.decryptJson<OAuthClientInformationFull>(
         connection.clientInfoJsonEnc,
       );
       const token = connection.refreshTokenEnc ?? connection.accessTokenEnc;
       const body = new URLSearchParams({
-        token: vault.decrypt(token),
+        token: await vault.decrypt(token),
         token_type_hint: connection.refreshTokenEnc ? "refresh_token" : "access_token",
         client_id: clientInfo.client_id,
       });

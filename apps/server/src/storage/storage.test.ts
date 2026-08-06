@@ -25,6 +25,7 @@ async function fixture() {
     id: "m1",
     name: "Shubham",
     visibility: "named",
+    role: "admin",
     createdAt: AT,
   });
   await storage.upsertAccount({
@@ -41,7 +42,7 @@ test("storage round-trips members, accounts, snapshots, positions and events", a
   const storage = await fixture();
 
   assert.deepEqual(await storage.listMembers(), [
-    { id: "m1", name: "Shubham", visibility: "named", createdAt: AT },
+    { id: "m1", name: "Shubham", visibility: "named", role: "admin", createdAt: AT },
   ]);
 
   const holdings = [p("nvda", 10, 900), p("aapl", 20, 200)];

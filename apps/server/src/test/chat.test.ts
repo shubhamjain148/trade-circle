@@ -93,12 +93,12 @@ before(async () => {
     APP_URL,
   } as NodeJS.ProcessEnv);
 
-  for (const [id, name, visibility] of [
-    ["m1", "Shubham", "named"],
-    ["m2", "Rahul", "named"],
-    ["m3", "Anjali", "paused"],
+  for (const [id, name, visibility, role] of [
+    ["m1", "Shubham", "named", "admin"],
+    ["m2", "Rahul", "named", "member"],
+    ["m3", "Anjali", "paused", "member"],
   ] as const) {
-    await storage.upsertMember({ id, name, visibility, createdAt: T(-60) });
+    await storage.upsertMember({ id, name, visibility, role, createdAt: T(-60) });
     await storage.upsertAccount({
       id: `a-${id}`,
       memberId: id,
@@ -243,6 +243,7 @@ describe("the merged timeline", () => {
       id: "m2",
       name: "Rahul",
       visibility: "anonymous",
+      role: "member",
       createdAt: T(-60),
     });
     await storage.insertFeedEvents([event("a-m2", "MSFT", T(60))]);
@@ -257,6 +258,7 @@ describe("the merged timeline", () => {
       id: "m2",
       name: "Rahul",
       visibility: "named",
+      role: "member",
       createdAt: T(-60),
     });
   });

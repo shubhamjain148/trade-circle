@@ -1,0 +1,20 @@
+# Local `wrangler dev` only. Copy to .dev.vars (gitignored) and edit.
+# Production values live in `wrangler.jsonc` vars and `wrangler secret put`.
+
+# Keys the token vault. Any string locally; 48 bytes of `openssl rand -base64 48`
+# in production, set with `wrangler secret put APP_SECRET`.
+APP_SECRET=local-dev-only-not-a-real-secret
+
+# Where the OAuth redirect URI and the settings-page bounce are built from.
+APP_URL=http://localhost:8787
+
+# Exposes POST /api/dev-seed. Never set in production.
+DEV_SEED=1
+
+# Optional. Defaults to https://mcp.indmoney.com/mcp in src/worker.ts.
+# Point it at src/test/fake-mcp-server.ts to exercise connect without touching
+# INDmoney — a real connect attempt registers a DCR client with them.
+# MCP_BASE_URL=http://127.0.0.1:0000/mcp
+
+# Optional. Lowers the vault KDF work factor if the free-plan CPU limit bites.
+# VAULT_KDF_ITERATIONS=100000
