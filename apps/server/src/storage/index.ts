@@ -1,11 +1,17 @@
 import type {
   AccountRow,
   FeedEventRow,
+  InviteTokenRow,
   MemberRow,
+  OAuthConnectionRow,
+  OAuthConnectionStatus,
+  OAuthStateRow,
   Position,
   RawArchiveRow,
+  SessionRow,
   SnapshotRow,
   StoredPosition,
+  ToolCatalogRow,
 } from "../domain.js";
 
 // Async by design: the SQLite implementation is synchronous underneath, but
@@ -16,11 +22,46 @@ export interface Storage {
 
   upsertMember(member: MemberRow): Promise<void>;
   listMembers(): Promise<MemberRow[]>;
+  getMember(id: string): Promise<MemberRow | undefined>;
 
   upsertAccount(account: AccountRow): Promise<void>;
   listAccounts(): Promise<AccountRow[]>;
   getAccount(id: string): Promise<AccountRow | undefined>;
+  getAccountByMember(memberId: string): Promise<AccountRow | undefined>;
+  setAccountStatus(accountId: string, status: AccountRow["status"]): Promise<void>;
   markPolled(accountId: string, at: string): Promise<void>;
+
+  createInvite(invite: InviteTokenRow): Promise<void>;
+  /** Single-use: returns the invite and stamps `used_at`; "used" if spent, undefined if unknown. */
+  consumeInvite(
+    tokenHash: string,
+    at: string,
+  ): Promise<InviteTokenRow | "used" | undefined>;
+
+  createSession(session: SessionRow): Promise<void>;
+  getSession(tokenHash: string, now: string): Promise<SessionRow | undefined>;
+  deleteSession(tokenHash: string): Promise<void>;
+
+  upsertOAuthConnection(connection: OAuthConnectionRow): Promise<void>;
+  getOAuthConnection(accountId: string): Promise<OAuthConnectionRow | undefined>;
+  listOAuthConnections(): Promise<OAuthConnectionRow[]>;
+  setOAuthConnectionStatus(
+    accountId: string,
+    status: OAuthConnectionStatus,
+    updatedAt: string,
+  ): Promise<void>;
+  deleteOAuthConnection(accountId: string): Promise<void>;
+  /**
+   * DCR credentials are per authorization server, not per friend (appendix 1 §3.2) —
+   * reuse an existing registration rather than minting a client per connect.
+   */
+  findClientInfoForIssuer(issuer: string): Promise<string | undefined>;
+
+  createOAuthState(state: OAuthStateRow): Promise<void>;
+  consumeOAuthState(state: string, now: string): Promise<OAuthStateRow | undefined>;
+
+  saveToolCatalog(accountId: string, capturedAt: string, tools: unknown): Promise<void>;
+  latestToolCatalog(accountId: string): Promise<ToolCatalogRow | undefined>;
 
   saveSnapshot(
     accountId: string,

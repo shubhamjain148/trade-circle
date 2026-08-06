@@ -70,7 +70,15 @@ function tickTime(index: number, total: number): Date {
   return new Date(Date.now() - (total - 1 - index) * DAY_MS);
 }
 
-export async function seed(dbPath = defaultDbPath): Promise<void> {
+/**
+ * membersOnly: create members + accounts but no fake portfolio history — the
+ * right starting point before connecting real INDmoney accounts, where demo
+ * positions would otherwise diff against real holdings as a storm of events.
+ */
+export async function seed(
+  dbPath = defaultDbPath,
+  membersOnly = process.argv.includes("--members-only"),
+): Promise<void> {
   if (dbPath !== ":memory:") {
     for (const suffix of ["", "-wal", "-shm"]) {
       rmSync(`${dbPath}${suffix}`, { force: true });
@@ -91,6 +99,12 @@ export async function seed(dbPath = defaultDbPath): Promise<void> {
       status: "active",
       lastPolledAt: null,
     });
+  }
+
+  if (membersOnly) {
+    await storage.close();
+    console.log(`seeded ${dbPath}: ${members.length} members, no demo history`);
+    return;
   }
 
   // Baseline, no events.

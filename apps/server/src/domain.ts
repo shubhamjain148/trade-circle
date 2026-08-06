@@ -66,3 +66,60 @@ export interface RawArchiveRow {
   tool: string;
   payload: unknown;
 }
+
+export interface InviteTokenRow {
+  tokenHash: string;
+  memberId: string;
+  createdAt: string;
+  usedAt: string | null;
+}
+
+export interface SessionRow {
+  tokenHash: string;
+  memberId: string;
+  createdAt: string;
+  expiresAt: string;
+}
+
+export type OAuthConnectionStatus = "active" | "needs_reauth" | "revoked";
+
+/**
+ * One friend's grant. Everything secret is AES-256-GCM at rest; `clientInfoJsonEnc`
+ * is not optional — the SDK refuses to refresh without the DCR client information
+ * (appendix 1 §1.3, "the #1 way to build the nags-everyone-daily version").
+ */
+export interface OAuthConnectionRow {
+  accountId: string;
+  provider: "indmoney";
+  accessTokenEnc: string;
+  refreshTokenEnc: string | null;
+  expiresAt: string | null;
+  scope: string | null;
+  clientInfoJsonEnc: string;
+  authorizationServerMetaJson: string;
+  createdAt: string;
+  updatedAt: string;
+  status: OAuthConnectionStatus;
+}
+
+/** In-flight authorization: state → member, PKCE verifier and the AS we started with. */
+export interface OAuthStateRow {
+  state: string;
+  memberId: string;
+  codeVerifierEnc: string;
+  issuer: string;
+  authorizationServerUrl: string;
+  authorizationServerMetaJson: string;
+  clientInfoJsonEnc: string;
+  resource: string | null;
+  createdAt: string;
+  expiresAt: string;
+}
+
+/** Raw `tools/list` output, captured on connect — INDmoney publishes no schemas. */
+export interface ToolCatalogRow {
+  id: number;
+  accountId: string;
+  capturedAt: string;
+  tools: unknown;
+}

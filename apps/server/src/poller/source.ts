@@ -4,8 +4,11 @@ import type { Storage } from "../storage/index.js";
 
 /**
  * The one seam between the watcher and INDmoney. `fetchNetWorthHash` is the
- * cheap probe (networth_snapshot); `fetchHoldings` is the expensive confirm
- * (networth_holdings). See src/poller/sources/mcp.todo.md.
+ * cheap probe; `fetchHoldings` is the expensive confirm. Implemented for real by
+ * src/mcp/source.ts.
+ *
+ * Contract: `fetchNetWorthHash` must return something comparable to
+ * `hashPositions` of the last stored snapshot — equal means "nothing changed".
  */
 export interface PortfolioSource {
   readonly name: string;
@@ -22,9 +25,9 @@ export function hashPositions(positions: Position[]): string {
 }
 
 /**
- * Stand-in until the MCP client lands: echoes back whatever was last stored, so
- * the scheduler and POST /api/poll are exercisable no-ops that never invent —
- * or, worse, erase — positions.
+ * Fallback for accounts with no INDmoney grant: echoes back whatever was last
+ * stored, so the scheduler and POST /api/poll are exercisable no-ops that never
+ * invent — or, worse, erase — positions.
  */
 export class SnapshotEchoSource implements PortfolioSource {
   readonly name = "snapshot-echo";

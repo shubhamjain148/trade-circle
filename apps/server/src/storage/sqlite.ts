@@ -5,11 +5,17 @@ import type {
   AccountRow,
   AccountStatus,
   FeedEventRow,
+  InviteTokenRow,
   MemberRow,
+  OAuthConnectionRow,
+  OAuthConnectionStatus,
+  OAuthStateRow,
   Position,
   RawArchiveRow,
+  SessionRow,
   SnapshotRow,
   StoredPosition,
+  ToolCatalogRow,
   Visibility,
 } from "../domain.js";
 import type { FeedEventType } from "../types.js";
@@ -82,6 +88,63 @@ CREATE TABLE IF NOT EXISTS raw_archive (
   payload_json TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS raw_archive_time ON raw_archive(fetched_at);
+
+-- Single-use join links. Only the hash is stored, so the DB cannot mint a login.
+CREATE TABLE IF NOT EXISTS invite_tokens (
+  token_hash TEXT PRIMARY KEY,
+  member_id  TEXT NOT NULL REFERENCES members(id),
+  created_at TEXT NOT NULL,
+  used_at    TEXT
+);
+CREATE INDEX IF NOT EXISTS invite_tokens_member ON invite_tokens(member_id);
+
+CREATE TABLE IF NOT EXISTS sessions (
+  token_hash TEXT PRIMARY KEY,
+  member_id  TEXT NOT NULL REFERENCES members(id),
+  created_at TEXT NOT NULL,
+  expires_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS sessions_member ON sessions(member_id);
+
+-- The vault. client_info_json_enc is required: without the DCR registration the
+-- SDK will not refresh, and the friend gets a spurious re-login (appendix 1 §1.3).
+CREATE TABLE IF NOT EXISTS oauth_connections (
+  account_id                     TEXT PRIMARY KEY REFERENCES accounts(id),
+  provider                       TEXT NOT NULL DEFAULT 'indmoney',
+  access_token_enc               TEXT NOT NULL,
+  refresh_token_enc              TEXT,
+  expires_at                     TEXT,
+  scope                          TEXT,
+  client_info_json_enc           TEXT NOT NULL,
+  authorization_server_meta_json TEXT NOT NULL,
+  created_at                     TEXT NOT NULL,
+  updated_at                     TEXT NOT NULL,
+  status                         TEXT NOT NULL CHECK (status IN ('active','needs_reauth','revoked'))
+);
+
+-- Short-lived; state is the only thing tying a callback back to a member.
+CREATE TABLE IF NOT EXISTS oauth_states (
+  state                          TEXT PRIMARY KEY,
+  member_id                      TEXT NOT NULL REFERENCES members(id),
+  code_verifier_enc              TEXT NOT NULL,
+  issuer                         TEXT NOT NULL,
+  authorization_server_url       TEXT NOT NULL,
+  authorization_server_meta_json TEXT NOT NULL,
+  client_info_json_enc           TEXT NOT NULL,
+  resource                       TEXT,
+  created_at                     TEXT NOT NULL,
+  expires_at                     TEXT NOT NULL
+);
+
+-- Schema capture. INDmoney publishes no tool schemas, so the first real connect
+-- is the only source of truth for src/mcp/toolmap.ts.
+CREATE TABLE IF NOT EXISTS tool_catalog (
+  id          INTEGER PRIMARY KEY,
+  account_id  TEXT NOT NULL REFERENCES accounts(id),
+  captured_at TEXT NOT NULL,
+  tools_json  TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS tool_catalog_acct ON tool_catalog(account_id, captured_at DESC);
 `;
 
 export const defaultDbPath = process.env.DB_PATH ?? "./data/watcher.db";
@@ -123,6 +186,19 @@ export class SqliteStorage implements Storage {
     }));
   }
 
+  async getMember(id: string): Promise<MemberRow | undefined> {
+    const r = this.db.prepare(`SELECT * FROM members WHERE id = ?`).get(id) as
+      | Record<string, string>
+      | undefined;
+    if (!r) return undefined;
+    return {
+      id: r.id,
+      name: r.name,
+      visibility: r.visibility as Visibility,
+      createdAt: r.created_at,
+    };
+  }
+
   async upsertAccount(a: AccountRow): Promise<void> {
     this.db
       .prepare(
@@ -145,6 +221,19 @@ export class SqliteStorage implements Storage {
       | Record<string, string | null>
       | undefined;
     return row ? toAccount(row) : undefined;
+  }
+
+  async getAccountByMember(memberId: string): Promise<AccountRow | undefined> {
+    const row = this.db
+      .prepare(`SELECT * FROM accounts WHERE member_id = ? ORDER BY id LIMIT 1`)
+      .get(memberId) as Record<string, string | null> | undefined;
+    return row ? toAccount(row) : undefined;
+  }
+
+  async setAccountStatus(accountId: string, status: AccountStatus): Promise<void> {
+    this.db
+      .prepare(`UPDATE accounts SET status = ? WHERE id = ?`)
+      .run(status, accountId);
   }
 
   async markPolled(accountId: string, at: string): Promise<void> {
@@ -337,6 +426,236 @@ export class SqliteStorage implements Storage {
       .run(olderThan);
     return Number(res.changes);
   }
+
+  async createInvite(invite: InviteTokenRow): Promise<void> {
+    this.db
+      .prepare(
+        `INSERT INTO invite_tokens (token_hash, member_id, created_at, used_at)
+         VALUES (?, ?, ?, ?)`,
+      )
+      .run(invite.tokenHash, invite.memberId, invite.createdAt, invite.usedAt);
+  }
+
+  async consumeInvite(
+    tokenHash: string,
+    at: string,
+  ): Promise<InviteTokenRow | "used" | undefined> {
+    const row = this.db
+      .prepare(`SELECT * FROM invite_tokens WHERE token_hash = ?`)
+      .get(tokenHash) as Record<string, string | null> | undefined;
+    if (!row) return undefined;
+    if (row.used_at) return "used";
+    this.db
+      .prepare(`UPDATE invite_tokens SET used_at = ? WHERE token_hash = ?`)
+      .run(at, tokenHash);
+    return {
+      tokenHash: String(row.token_hash),
+      memberId: String(row.member_id),
+      createdAt: String(row.created_at),
+      usedAt: at,
+    };
+  }
+
+  async createSession(session: SessionRow): Promise<void> {
+    this.db
+      .prepare(
+        `INSERT INTO sessions (token_hash, member_id, created_at, expires_at)
+         VALUES (?, ?, ?, ?)`,
+      )
+      .run(
+        session.tokenHash,
+        session.memberId,
+        session.createdAt,
+        session.expiresAt,
+      );
+  }
+
+  async getSession(
+    tokenHash: string,
+    now: string,
+  ): Promise<SessionRow | undefined> {
+    const row = this.db
+      .prepare(`SELECT * FROM sessions WHERE token_hash = ? AND expires_at > ?`)
+      .get(tokenHash, now) as Record<string, string> | undefined;
+    if (!row) return undefined;
+    return {
+      tokenHash: row.token_hash,
+      memberId: row.member_id,
+      createdAt: row.created_at,
+      expiresAt: row.expires_at,
+    };
+  }
+
+  async deleteSession(tokenHash: string): Promise<void> {
+    this.db.prepare(`DELETE FROM sessions WHERE token_hash = ?`).run(tokenHash);
+  }
+
+  async upsertOAuthConnection(c: OAuthConnectionRow): Promise<void> {
+    this.db
+      .prepare(
+        `INSERT INTO oauth_connections
+           (account_id, provider, access_token_enc, refresh_token_enc, expires_at, scope,
+            client_info_json_enc, authorization_server_meta_json, created_at, updated_at, status)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(account_id) DO UPDATE SET
+           access_token_enc = excluded.access_token_enc,
+           refresh_token_enc = excluded.refresh_token_enc,
+           expires_at = excluded.expires_at,
+           scope = excluded.scope,
+           client_info_json_enc = excluded.client_info_json_enc,
+           authorization_server_meta_json = excluded.authorization_server_meta_json,
+           updated_at = excluded.updated_at,
+           status = excluded.status`,
+      )
+      .run(
+        c.accountId,
+        c.provider,
+        c.accessTokenEnc,
+        c.refreshTokenEnc,
+        c.expiresAt,
+        c.scope,
+        c.clientInfoJsonEnc,
+        c.authorizationServerMetaJson,
+        c.createdAt,
+        c.updatedAt,
+        c.status,
+      );
+  }
+
+  async getOAuthConnection(
+    accountId: string,
+  ): Promise<OAuthConnectionRow | undefined> {
+    const row = this.db
+      .prepare(`SELECT * FROM oauth_connections WHERE account_id = ?`)
+      .get(accountId) as Record<string, string | null> | undefined;
+    return row ? toConnection(row) : undefined;
+  }
+
+  async listOAuthConnections(): Promise<OAuthConnectionRow[]> {
+    const rows = this.db
+      .prepare(`SELECT * FROM oauth_connections ORDER BY account_id`)
+      .all() as Record<string, string | null>[];
+    return rows.map(toConnection);
+  }
+
+  async setOAuthConnectionStatus(
+    accountId: string,
+    status: OAuthConnectionStatus,
+    updatedAt: string,
+  ): Promise<void> {
+    this.db
+      .prepare(
+        `UPDATE oauth_connections SET status = ?, updated_at = ? WHERE account_id = ?`,
+      )
+      .run(status, updatedAt, accountId);
+  }
+
+  async deleteOAuthConnection(accountId: string): Promise<void> {
+    this.db
+      .prepare(`DELETE FROM oauth_connections WHERE account_id = ?`)
+      .run(accountId);
+  }
+
+  async findClientInfoForIssuer(issuer: string): Promise<string | undefined> {
+    const row = this.db
+      .prepare(
+        `SELECT client_info_json_enc FROM oauth_connections
+         WHERE json_extract(authorization_server_meta_json, '$.issuer') = ?
+         ORDER BY created_at LIMIT 1`,
+      )
+      .get(issuer) as Record<string, string> | undefined;
+    return row?.client_info_json_enc;
+  }
+
+  async createOAuthState(s: OAuthStateRow): Promise<void> {
+    this.db
+      .prepare(
+        `INSERT INTO oauth_states
+           (state, member_id, code_verifier_enc, issuer, authorization_server_url,
+            authorization_server_meta_json, client_info_json_enc, resource, created_at, expires_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        s.state,
+        s.memberId,
+        s.codeVerifierEnc,
+        s.issuer,
+        s.authorizationServerUrl,
+        s.authorizationServerMetaJson,
+        s.clientInfoJsonEnc,
+        s.resource,
+        s.createdAt,
+        s.expiresAt,
+      );
+  }
+
+  async consumeOAuthState(
+    state: string,
+    now: string,
+  ): Promise<OAuthStateRow | undefined> {
+    const row = this.db
+      .prepare(`SELECT * FROM oauth_states WHERE state = ?`)
+      .get(state) as Record<string, string | null> | undefined;
+    // Single-use whether or not it was still valid.
+    this.db.prepare(`DELETE FROM oauth_states WHERE state = ?`).run(state);
+    this.db.prepare(`DELETE FROM oauth_states WHERE expires_at <= ?`).run(now);
+    if (!row || String(row.expires_at) <= now) return undefined;
+    return {
+      state: String(row.state),
+      memberId: String(row.member_id),
+      codeVerifierEnc: String(row.code_verifier_enc),
+      issuer: String(row.issuer),
+      authorizationServerUrl: String(row.authorization_server_url),
+      authorizationServerMetaJson: String(row.authorization_server_meta_json),
+      clientInfoJsonEnc: String(row.client_info_json_enc),
+      resource: row.resource ?? null,
+      createdAt: String(row.created_at),
+      expiresAt: String(row.expires_at),
+    };
+  }
+
+  async saveToolCatalog(
+    accountId: string,
+    capturedAt: string,
+    tools: unknown,
+  ): Promise<void> {
+    this.db
+      .prepare(
+        `INSERT INTO tool_catalog (account_id, captured_at, tools_json) VALUES (?, ?, ?)`,
+      )
+      .run(accountId, capturedAt, JSON.stringify(tools));
+  }
+
+  async latestToolCatalog(accountId: string): Promise<ToolCatalogRow | undefined> {
+    const row = this.db
+      .prepare(
+        `SELECT * FROM tool_catalog WHERE account_id = ? ORDER BY captured_at DESC, id DESC LIMIT 1`,
+      )
+      .get(accountId) as Record<string, string | number> | undefined;
+    if (!row) return undefined;
+    return {
+      id: Number(row.id),
+      accountId: String(row.account_id),
+      capturedAt: String(row.captured_at),
+      tools: JSON.parse(String(row.tools_json)) as unknown,
+    };
+  }
+}
+
+function toConnection(r: Record<string, string | null>): OAuthConnectionRow {
+  return {
+    accountId: String(r.account_id),
+    provider: "indmoney",
+    accessTokenEnc: String(r.access_token_enc),
+    refreshTokenEnc: r.refresh_token_enc ?? null,
+    expiresAt: r.expires_at ?? null,
+    scope: r.scope ?? null,
+    clientInfoJsonEnc: String(r.client_info_json_enc),
+    authorizationServerMetaJson: String(r.authorization_server_meta_json),
+    createdAt: String(r.created_at),
+    updatedAt: String(r.updated_at),
+    status: String(r.status) as OAuthConnectionStatus,
+  };
 }
 
 function toAccount(r: Record<string, string | null>): AccountRow {
