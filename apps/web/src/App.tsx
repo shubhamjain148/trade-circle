@@ -1,19 +1,34 @@
-import { Button } from "@workspace/ui/components/button"
+import { AppShell } from "@/components/app-shell"
+import { MemberSwitcher } from "@/components/member-switcher"
+import { useFeedRoute } from "@/hooks/use-feed-route"
+import { useMembers } from "@/hooks/use-watcher-data"
+import { GroupFeedView } from "@/views/group-feed-view"
+import { MemberFeedView } from "@/views/member-feed-view"
 
 export function App() {
+  const [view, setView] = useFeedRoute()
+  const { data: members, isLoading: isLoadingMembers } = useMembers()
+
   return (
-    <div className="flex min-h-svh p-6">
-      <div className="flex max-w-md min-w-0 flex-col gap-4 text-sm leading-loose">
-        <div>
-          <h1 className="font-medium">Project ready!</h1>
-          <p>You may now add components and start building.</p>
-          <p>We&apos;ve already added the button component for you.</p>
-          <Button className="mt-2">Button</Button>
-        </div>
-        <div className="text-muted-foreground font-mono text-xs">
-          (Press <kbd>d</kbd> to toggle dark mode)
-        </div>
-      </div>
-    </div>
+    <AppShell
+      switcher={
+        <MemberSwitcher
+          members={members}
+          isLoading={isLoadingMembers}
+          view={view}
+          onViewChange={setView}
+        />
+      }
+    >
+      {view.kind === "group" ? (
+        <GroupFeedView members={members} />
+      ) : (
+        <MemberFeedView
+          key={view.memberId}
+          memberId={view.memberId}
+          member={members?.find((member) => member.id === view.memberId)}
+        />
+      )}
+    </AppShell>
   )
 }
