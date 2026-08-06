@@ -16,7 +16,7 @@
       "binding": "DB",
       "database_name": "indmoney-watcher",
       // Filled in by `wrangler d1 create indmoney-watcher` — see docs/DEPLOYMENT.md.
-      "database_id": "REPLACE_WITH_D1_DATABASE_ID",
+      "database_id": "ff33c815-4c39-48f2-9c83-79703a4d6f96",
       "migrations_dir": "./migrations"
     }
   ],
@@ -43,7 +43,8 @@
   },
 
   "vars": {
-    "MCP_CLIENT_NAME": "indmoney-watcher"
+    "MCP_CLIENT_NAME": "indmoney-watcher",
+    "APP_URL": "https://indmoney-watcher.shubhjai.workers.dev"
     // MCP_BASE_URL is deliberately NOT here. A key present in `vars` wins over
     // the same key in .dev.vars, so declaring it would make `wrangler dev`
     // unable to point at a local fake and every local connect attempt would
