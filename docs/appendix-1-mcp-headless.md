@@ -12,6 +12,42 @@
 
 ---
 
+## Addendum (2026-08-06): Superseded by live verification
+
+Everything below this box was written before any real login. Later the same day the project made
+its first genuine OAuth connect + poll against `mcp.indmoney.com`. Full facts and the "still open"
+list live in `RESEARCH.md` (§6a, dated the same day) — this box is the pointer from the document
+that was speculating to the one with the answer. Marked **[LIVE]** below for anything this
+document's body got wrong or should no longer be treated as open.
+
+- **§2.4 token lifetime — resolved [LIVE].** Access-token TTL is **exactly 1 hour** (`expires_at`
+  showed +1h from issuance) — confirms the "~1h [?]" guess in §6 item 4 and the middle row of the
+  §2.4 re-login table. A refresh token *was* issued. **Still open, exactly as §6 item 1/2 said:**
+  whether it rotates and its own hard expiry — the first real refresh exercise happens ~1h after
+  connect, not yet observed.
+- **§2.5 tool count — resolved [LIVE].** `tools/list` returned **15 tools**, confirming the "15
+  actually present" finding and this document's own tool-name list almost exactly — see
+  `RESEARCH.md` for the verbatim 15 names as observed live (naming matches this doc's §2.5 list,
+  not the `get_user_networth_v2` alias some third-party clients used).
+- **§2.5 argument shapes — corrected [LIVE].** `networth_holdings{asset_type}` takes an *enum*, not
+  a free string: `IND_STOCK, MF, US_STOCK, BOND, EPF, NPS, SA, FD, CRYPTO, INSURANCE, VEHICLE, RE,
+  RD, AIF, PMS, PPF`. An unrecognized value does **not** error — it silently returns an empty list.
+  `networth_snapshot` takes no arguments at all (this doc didn't cover its shape).
+- **New, not anticipated by this document:** results arrive double-wrapped — both
+  `content[0].text` (a JSON string) and `structuredContent.result` (also a JSON string) — because
+  the server runs on FastMCP. Unwrap both.
+- **New:** holdings rows carry no ticker symbol anywhere, only `investment_code` /
+  `investment` (name) — `lookup_ind_keys` is the only name→id path, exactly as this doc assumed but
+  never confirmed against a real payload.
+- **New:** INDmoney aggregates external-broker holdings too (a Zerodha position appeared under
+  `IND_STOCK` with `broker: "Zerodha"`) — broader visibility than "INDmoney-native holdings only."
+- **Still fully open** (this document's §5/§6 checklist items not yet touched by the live connect):
+  refresh rotation/hard expiry (P12, only partially begun), rate-limit shape (P15), protocol
+  revision negotiation (P14), DCR `client_secret` expiry (P8), ToS restriction on non-Claude clients
+  (item 10), concurrent-session behavior (P16).
+
+---
+
 ## 0. Executive answer
 
 Yes. A plain backend server can be a fully-fledged MCP client to `https://mcp.indmoney.com/mcp`.
