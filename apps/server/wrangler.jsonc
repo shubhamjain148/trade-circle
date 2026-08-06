@@ -44,7 +44,11 @@
 
   "vars": {
     "MCP_CLIENT_NAME": "indmoney-watcher",
-    "APP_URL": "https://indmoney-watcher.shubhjai.workers.dev"
+    "APP_URL": "https://indmoney-watcher.shubhjai.workers.dev",
+    // Cloudflare's runtime caps WebCrypto PBKDF2 at 100k iterations (production
+    // enforces it; miniflare doesn't). Fine here: the secret is 48 random bytes,
+    // so KDF stretching adds little — hardness matters for guessable passwords.
+    "VAULT_KDF_ITERATIONS": "100000"
     // MCP_BASE_URL is deliberately NOT here. A key present in `vars` wins over
     // the same key in .dev.vars, so declaring it would make `wrangler dev`
     // unable to point at a local fake and every local connect attempt would
