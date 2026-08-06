@@ -2,6 +2,16 @@
 
 **Date:** 2026-08-06 · **Status:** research only, nothing built, no accounts touched.
 
+> **Decisions log (2026-08-06):**
+> 1. Read-only watch + notify only; no write access ever (see §4).
+> 2. Notifications live in an **in-app chat/activity feed served by our own app** — no push
+>    messages for now. The Telegram bot gets *provisioned* (bot + group created, token stored)
+>    but stays dormant until we want push.
+> 3. Polling: **hourly probe during US market hours**, plus one pull **before market open** and
+>    one **after market close**. (~10 calls/account/day.)
+> 4. The feed has two views: a **group feed** (everyone's events interleaved, chat-style) and an
+>    **individual feed per friend** (one person's activity history).
+
 **Scope decision (made during this research):** this project is **read-only watch + notify, only**.
 We watch each friend's **US stock portfolio** on INDmoney and surface "X just bought Y" into the
 group — replacing the WhatsApp chatter about what bets everyone is taking. There is **no write
@@ -56,7 +66,8 @@ Caveats carried forward from appendix 1:
 
 ## 3. Recommended architecture
 
-One small self-hosted service (a friend's VPS or home box), SQLite, Telegram.
+One small self-hosted service (a friend's VPS or home box), SQLite, and an in-app chat/activity
+feed as the delivery surface (Telegram provisioned but dormant).
 
 ```
                           one-time browser login per friend
@@ -71,8 +82,9 @@ One small self-hosted service (a friend's VPS or home box), SQLite, Telegram.
  │            │                                                          │
  │            ▼                                                          │
  │  Poller (US-market-hours aware, per-account stagger + backoff)        │
- │     ├─ cheap probe: net-worth snapshot hash, every ~5 min             │
- │     └─ full holdings pull only when the hash changes                  │
+ │     ├─ hourly probe during US market hours:                           │
+ │     │    net-worth snapshot hash → full holdings pull on change       │
+ │     └─ unconditional pulls: once pre-open, once post-close            │
  │            │                                                          │
  │            ▼                                                          │
  │  Diff engine (keyed on instrument id, fractional-qty aware)           │
@@ -85,23 +97,28 @@ One small self-hosted service (a friend's VPS or home box), SQLite, Telegram.
  │  payload archive (SQLite/WAL)                                         │
  │            │                                                          │
  │            ▼                                                          │
- │  Notifier ──────────► Telegram group bot                              │
+ │  Notifier ──────────► in-app chat / activity feed (our own app)       │
  │     "🟢 Rahul opened a new position: NVDA (~2.4% of portfolio)"       │
  │     per-friend visibility settings: named / anonymous / paused        │
+ │     (Telegram bot provisioned but dormant — future push channel)      │
  └───────────────────────────────────────────────────────────────────────┘
 ```
 
 Key design choices (full reasoning in appendix 2):
 
-- **Two-tier polling.** A cheap net-worth-snapshot probe every ~5 minutes per account; a full
-  holdings pull only when the probe's hash changes, plus unconditional pulls at session open/close
-  and a next-morning settlement catch-up. Accounts staggered; ~100 calls/account/day — deliberately
-  timid since INDmoney publishes no rate-limit numbers. Backoff is **per-account** (limits are
-  per-user; one friend's throttle must not stall the group).
+- **Two-tier polling, hourly cadence (decided).** A cheap net-worth-snapshot probe **once per
+  hour** per account during US market hours; a full holdings pull only when the probe's hash
+  changes, plus unconditional pulls **once before market open and once after market close** (the
+  post-close and pre-open pulls also serve as the T+1 settlement catch-up). Accounts staggered
+  within the hour; roughly 10 calls/account/day — so far below any plausible rate limit that the
+  unpublished-limits unknown mostly stops mattering. Backoff is still **per-account** (limits are
+  per-user; one friend's throttle must not stall the group). Notification latency is up to an
+  hour, which is fine for a feed you check like a group chat, and the cadence is trivial to
+  tighten later if the feed feels stale.
 - **US market hours.** For a US-stock watcher the hot window is 19:00–02:00 IST (…20:00–02:30 in
-  US winter). Poll densely there, sparsely otherwise, with one catch-up pass the next morning IST —
-  practically, most notifications will land in the group in the evening, which suits a friend
-  group fine. US T+1 settlement means a buy may surface in *holdings* a day after execution; the
+  US winter). Hourly probes run only inside that window; the pre-open and post-close pulls bracket
+  it — practically, most feed items will appear in the evening IST, which suits a friend group
+  fine. US T+1 settlement means a buy may surface in *holdings* a day after execution; the
   probe on net-worth and the position-detail tool likely surface it sooner — exactly which tool
   shows same-day activity is probe P-list item #1 (§6).
 - **Diff on instrument id, never ticker.** Handle fractional quantities (INDmoney US default) with
@@ -113,12 +130,22 @@ Key design choices (full reasoning in appendix 2):
   Bias hard toward suppression; require two agreeing polls before ever emitting "sold everything."
 - **Storage: snapshot + event log + raw archive.** The 90-day raw-payload archive is what lets us
   backtest improved heuristics against real past false positives.
-- **Telegram, not WhatsApp.** WhatsApp's Business API is structurally wrong for this: server-
-  initiated messages outside a 24-hour window must be pre-approved templates, and interactive
-  buttons don't work outside that window — plus Meta business verification. Telegram gives a free
-  bot, group messages, and (if we ever want them) inline buttons. Since the group already lives on
-  WhatsApp, the switch cost is one new Telegram group — worth it. Coalesce each account's changes
-  per tick into one message (Telegram caps ~20 msg/min per group).
+- **Delivery: in-app chat/feed first; Telegram provisioned but dormant (decided).** The app
+  itself hosts the group's chat/activity feed — trade events post into it as messages alongside
+  the friends' own chatter, no push for now; you open the app the way you'd open the WhatsApp
+  group. This sidesteps all third-party messaging constraints and keeps portfolio data entirely
+  inside our own service. We still create the Telegram bot + group and store the token now
+  (5-minute setup) so that turning on push later is a config flip, not a build. If/when push
+  turns on: Telegram over WhatsApp — WhatsApp's Business API is structurally wrong for this
+  (server-initiated messages outside a 24-hour window must be pre-approved templates, plus Meta
+  business verification), while Telegram gives a free bot, group messages, and inline buttons.
+  Coalesce each account's changes per tick into one feed message either way.
+- **Two feed views (decided).** A **group feed** — everyone's trade events interleaved
+  chronologically, chat-style — and an **individual feed** per friend, showing one person's
+  activity history ("what has Rahul been buying lately"). Both are straight projections of the
+  same append-only event log (`WHERE account_id = ?` vs no filter), so this costs nothing extra
+  in storage design; per-friend visibility settings (named / anonymous / paused) apply
+  identically to both views.
 - **Privacy inside the group.** Broadcasting is **opt-in per friend**, with modes: named /
   anonymous ("someone in the group bought…") / paused. Report position sizes as *percentage of
   portfolio*, never rupee amounts, by default. Instant `/pause` command. Everyone signs off (a
@@ -173,13 +200,14 @@ resolves every remaining unknown before writing real code. From the appendix che
 5. Deliberately poll a bit fast once to observe the rate-limit response shape (status code,
    Retry-After) — then never again.
 
-**Phase 1 — watch + notify (the product):** token vault, two-tier poller, diff engine with
-corporate-action suppression, SQLite store, Telegram bot with per-friend visibility settings.
-Run it for the group. Iterate on false positives using the raw archive. **This is the whole
-roadmap's end state** — anything beyond it is a new conversation with new (legal) homework.
+**Phase 1 — watch + notify (the product):** token vault, hourly poller (+ pre-open/post-close
+pulls), diff engine with corporate-action suppression, SQLite store, and the **in-app chat/
+activity feed** (group view + individual per-friend view) with per-friend visibility settings. Provision the Telegram bot + group (dormant).
+Run it for the friend group. Iterate on false positives using the raw archive. **This is the
+whole roadmap's end state** — anything beyond it is a new conversation with new (legal) homework.
 
-Nice-to-haves once stable: weekly portfolio-drift digest, "who's most exposed to NVDA" fun stats,
-a `/portfolio` DM command showing only your own data.
+Nice-to-haves once stable: turning on Telegram push, weekly portfolio-drift digest, "who's most
+exposed to NVDA" fun stats, a private "my portfolio" view showing only your own data.
 
 ## 7. Appendices
 
