@@ -19,10 +19,37 @@ export interface FeedEvent {
   detectedAt: string
 }
 
+export type Visibility = "named" | "anonymous" | "paused"
+
 export interface Member {
   id: string
   name: string
-  visibility: "named" | "anonymous" | "paused"
+  visibility: Visibility
+}
+
+/**
+ * The state of one member's INDmoney link. `connected` and `status` are
+ * separate on purpose: a revoked account is still on file (we know its last
+ * pass) but is no longer feeding the group.
+ */
+export type AccountStatus = "active" | "needs_reauth" | "revoked" | "pending"
+
+export interface Account {
+  connected: boolean
+  status: AccountStatus
+  /** ISO timestamp of the last successful poll, or null before the first one. */
+  lastPolledAt: string | null
+}
+
+/** GET /api/me — `account` is null until the member connects INDmoney. */
+export interface Me {
+  member: Member
+  account: Account | null
+}
+
+/** POST /api/auth/session — the invite handshake returns just the member. */
+export interface SessionResponse {
+  member: Member
 }
 
 /**
@@ -32,3 +59,13 @@ export interface Member {
 export type FeedView = { kind: "group" } | { kind: "member"; memberId: string }
 
 export const GROUP_VIEW: FeedView = { kind: "group" }
+
+/**
+ * The whole app in one value. Join and settings are peers of the feed rather
+ * than a nested router: there are three screens, and a union keeps the
+ * signed-out/signed-in branching in App readable.
+ */
+export type Route =
+  | { kind: "feed"; view: FeedView }
+  | { kind: "join"; token: string | null }
+  | { kind: "settings"; connected: boolean; connectError: string | null }

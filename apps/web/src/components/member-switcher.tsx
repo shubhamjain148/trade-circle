@@ -62,7 +62,10 @@ export function MemberSwitcher({
     >
       <TabsList
         variant="line"
-        className="-mx-1 max-w-full flex-nowrap gap-0.5 overflow-x-auto px-1 [scrollbar-width:none] group-data-horizontal/tabs:h-11 [&::-webkit-scrollbar]:hidden"
+        /* justify-start, not the variant's justify-center: once the roster
+           overflows, centring pushes "Group" off the left edge into space the
+           scroller can't reach. */
+        className="-mx-1 max-w-full flex-nowrap justify-start gap-0.5 overflow-x-auto px-1 [scrollbar-width:none] group-data-horizontal/tabs:h-11 [&::-webkit-scrollbar]:hidden"
       >
         <TabsTrigger value={GROUP_VALUE} className={TRIGGER}>
           Group
