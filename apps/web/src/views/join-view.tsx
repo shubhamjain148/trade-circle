@@ -1,6 +1,7 @@
 import * as React from "react"
 
 import { Button } from "@workspace/ui/components/button"
+import { cn } from "@workspace/ui/lib/utils"
 
 import { GateScreen } from "@/components/gate-screen"
 import { useSession } from "@/components/session-provider"
@@ -28,6 +29,21 @@ type JoinPhase =
 interface JoinViewProps {
   token: string | null
 }
+
+/**
+ * The one screen in this app that is allowed to be a moment.
+ *
+ * You see it once — the first time you are let into your friends' group — and
+ * it is the only place the delight budget is spent. It was already a 300ms fade
+ * and rise on the block as a whole; the block is now three beats 75ms apart, so
+ * the greeting lands, then the explanation, then the way out. Same curve, same
+ * duration, no bounce: the stagger is the warmth, not an overshoot.
+ *
+ * Every failure screen below is deliberately still, because a person reading
+ * "that invite has already been used" is not having a moment.
+ */
+const WELCOME =
+  "duration-300 ease-out animate-in fade-in slide-in-from-bottom-1 fill-mode-backwards motion-reduce:animate-none motion-reduce:delay-0"
 
 export function JoinView({ token }: JoinViewProps) {
   const { state, refresh } = useSession()
@@ -120,18 +136,33 @@ export function JoinView({ token }: JoinViewProps) {
   if (join.phase === "linked") {
     return (
       <GateScreen>
-        <div className="flex flex-col gap-5 duration-300 ease-out animate-in fade-in slide-in-from-bottom-1 motion-reduce:animate-none">
-          <h1 className="font-heading text-2xl leading-tight font-medium tracking-tight text-balance">
+        <div className="flex flex-col gap-5">
+          <h1
+            className={cn(
+              WELCOME,
+              "font-heading text-2xl leading-tight font-medium tracking-tight text-balance"
+            )}
+          >
             Device linked — you're in as {firstName(join.member.name)}.
           </h1>
 
-          <p className="border-t border-border pt-4 text-sm leading-relaxed text-muted-foreground">
+          <p
+            className={cn(
+              WELCOME,
+              "border-t border-border pt-4 text-sm leading-relaxed text-muted-foreground delay-75"
+            )}
+          >
             Your other device is still signed in. Nothing about your INDmoney
             connection changed — this screen just joins the ones you already
             read the feed on.
           </p>
 
-          <div className="flex flex-wrap items-center gap-2 pt-1">
+          <div
+            className={cn(
+              WELCOME,
+              "flex flex-wrap items-center gap-2 pt-1 delay-150"
+            )}
+          >
             <Button onClick={() => navigate(FEED_HREF)}>Go to the feed</Button>
             <Button variant="ghost" onClick={() => navigate(SETTINGS_HREF)}>
               Settings
@@ -151,19 +182,34 @@ export function JoinView({ token }: JoinViewProps) {
 
     return (
       <GateScreen>
-        <div className="flex flex-col gap-5 duration-300 ease-out animate-in fade-in slide-in-from-bottom-1 motion-reduce:animate-none">
-          <h1 className="font-heading text-2xl leading-tight font-medium tracking-tight text-balance">
+        <div className="flex flex-col gap-5">
+          <h1
+            className={cn(
+              WELCOME,
+              "font-heading text-2xl leading-tight font-medium tracking-tight text-balance"
+            )}
+          >
             {connected ? "Welcome back" : "You're in"},{" "}
             {firstName(join.member.name)}.
           </h1>
 
-          <p className="border-t border-border pt-4 text-sm leading-relaxed text-muted-foreground">
+          <p
+            className={cn(
+              WELCOME,
+              "border-t border-border pt-4 text-sm leading-relaxed text-muted-foreground delay-75"
+            )}
+          >
             {connected
               ? "INDmoney is already connected on this account — the watcher is reading your holdings and posting changes to the group."
               : "One thing left: connect INDmoney so the group can see your moves. Read-only — percentages of your portfolio, never amounts."}
           </p>
 
-          <div className="flex flex-wrap items-center gap-2 pt-1">
+          <div
+            className={cn(
+              WELCOME,
+              "flex flex-wrap items-center gap-2 pt-1 delay-150"
+            )}
+          >
             {connected ? (
               <>
                 <Button onClick={() => navigate(FEED_HREF)}>

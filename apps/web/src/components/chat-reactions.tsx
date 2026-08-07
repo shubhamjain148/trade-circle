@@ -2,6 +2,7 @@ import * as React from "react"
 
 import { cn } from "@workspace/ui/lib/utils"
 
+import { ARRIVING_PILL, isArriving, OPENING_PICKER } from "@/lib/motion"
 import { REACTION_EMOJI } from "@/lib/types"
 import type { ReactionItemKind, ReactionSummary } from "@/lib/types"
 
@@ -249,36 +250,45 @@ export function Reactable({
     >
       {children}
 
-      {/* Absolute and conditional: a row nobody has reacted to is untouched. */}
+      {/* Absolute and conditional: a row nobody has reacted to is untouched.
+          Two nested elements rather than one — the outer is position (and the
+          only thing clampIntoThread is allowed to touch), the inner is the
+          chrome and the entrance. See OPENING_PICKER for why they can't be the
+          same node. */}
       {open ? (
         <div
           ref={anchorPicker}
-          className={cn(
-            "absolute top-1/2 z-10 flex -translate-y-1/2 items-center gap-0.5 rounded-full border border-border bg-background/95 px-1 py-0.5 backdrop-blur-sm",
-            pickerEdge
-          )}
+          className={cn("absolute top-1/2 z-10 -translate-y-1/2", pickerEdge)}
         >
-          {REACTION_EMOJI.map((emoji) => {
-            const on = mine.has(emoji)
-            return (
-              <button
-                key={emoji}
-                type="button"
-                aria-label={on ? `Remove ${emoji}` : `React with ${emoji}`}
-                aria-pressed={on}
-                data-reaction={emoji}
-                onClick={() => toggle(emoji, !on)}
-                className={cn(
-                  "flex size-6 items-center justify-center rounded-full text-sm leading-none transition-colors",
-                  on
-                    ? "bg-foreground/10"
-                    : "hover:bg-foreground/[0.07] active:bg-foreground/10"
-                )}
-              >
-                <span aria-hidden>{emoji}</span>
-              </button>
-            )
-          })}
+          <div
+            className={cn(
+              "flex items-center gap-0.5 rounded-full border border-border bg-background/95 px-1 py-0.5 backdrop-blur-sm",
+              OPENING_PICKER,
+              side === "end" ? "origin-right" : "origin-left"
+            )}
+          >
+            {REACTION_EMOJI.map((emoji) => {
+              const on = mine.has(emoji)
+              return (
+                <button
+                  key={emoji}
+                  type="button"
+                  aria-label={on ? `Remove ${emoji}` : `React with ${emoji}`}
+                  aria-pressed={on}
+                  data-reaction={emoji}
+                  onClick={() => toggle(emoji, !on)}
+                  className={cn(
+                    "flex size-6 items-center justify-center rounded-full text-sm leading-none transition-colors",
+                    on
+                      ? "bg-foreground/10"
+                      : "hover:bg-foreground/[0.07] active:bg-foreground/10"
+                  )}
+                >
+                  <span aria-hidden>{emoji}</span>
+                </button>
+              )
+            })}
+          </div>
         </div>
       ) : null}
 
@@ -295,7 +305,9 @@ export function Reactable({
         onClick={() => setHeld((current) => !current)}
         className={cn(
           "sr-only focus-visible:not-sr-only focus-visible:absolute focus-visible:top-1/2 focus-visible:z-10 focus-visible:flex focus-visible:size-6 focus-visible:-translate-y-1/2 focus-visible:items-center focus-visible:justify-center focus-visible:rounded-full focus-visible:border focus-visible:border-border focus-visible:bg-background focus-visible:font-mono focus-visible:text-3xs focus-visible:text-muted-foreground",
-          side === "end" ? "focus-visible:right-full focus-visible:mr-1.5" : "focus-visible:left-full focus-visible:ml-1.5"
+          side === "end"
+            ? "focus-visible:right-full focus-visible:mr-1.5"
+            : "focus-visible:left-full focus-visible:ml-1.5"
         )}
       >
         <span aria-hidden>+</span>
@@ -306,6 +318,7 @@ export function Reactable({
           summaries={summaries}
           side={side}
           className={pillsClassName}
+          arrivalKey={`${itemKind}:${itemId}`}
           onToggle={(emoji, on) => toggle(emoji, on)}
         />
       ) : null}
@@ -317,6 +330,8 @@ interface ReactionPillsProps {
   summaries: ReactionSummary[]
   side: "start" | "end"
   className?: string
+  /** Identifies the item, so each pill's arrival can be decided once. */
+  arrivalKey: string
   onToggle: (emoji: string, on: boolean) => void
 }
 
@@ -329,6 +344,7 @@ function ReactionPills({
   summaries,
   side,
   className,
+  arrivalKey,
   onToggle,
 }: ReactionPillsProps) {
   return (
@@ -343,6 +359,7 @@ function ReactionPills({
         <ReactionPill
           key={summary.emoji}
           summary={summary}
+          arrivalKey={`${arrivalKey}:${summary.emoji}`}
           onToggle={() => onToggle(summary.emoji, !summary.mine)}
         />
       ))}
@@ -352,12 +369,19 @@ function ReactionPills({
 
 function ReactionPill({
   summary,
+  arrivalKey,
   onToggle,
 }: {
   summary: ReactionSummary
+  arrivalKey: string
   onToggle: () => void
 }) {
   const root = React.useRef<HTMLSpanElement>(null)
+  // A reaction that lands while you're reading is the clearest signal in this
+  // app that somebody else is here. One that was already on the row when the
+  // page opened is just a number, and popping forty of them on load would say
+  // the opposite of "someone is here".
+  const arriving = isArriving(arrivalKey)
   const [revealed, setRevealed] = React.useState(false)
   const hide = React.useCallback(() => setRevealed(false), [])
   useDismiss(revealed, root, hide)
@@ -389,7 +413,8 @@ function ReactionPill({
           "inline-flex items-center gap-1 rounded-full border px-1.5 py-px transition-colors",
           summary.mine
             ? "border-foreground/25 bg-foreground/[0.08]"
-            : "border-border hover:border-foreground/20"
+            : "border-border hover:border-foreground/20",
+          arriving && ARRIVING_PILL
         )}
       >
         <span aria-hidden className="text-[0.8125rem] leading-4">

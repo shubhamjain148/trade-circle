@@ -11,6 +11,7 @@ import { useResource } from "@/hooks/use-resource"
 import { memberPositionsPath } from "@/lib/api"
 import { absoluteTime, relativeTimeCompact } from "@/lib/format"
 import { instrumentLabel } from "@/lib/instrument"
+import { REVEAL } from "@/lib/motion"
 import { describeSeries, heldFor } from "@/lib/sparkline"
 import type { Holding, HoldingHistory } from "@/lib/types"
 
@@ -132,7 +133,7 @@ export function HoldingsPanel({
       ) : (
         <>
           <ul id="holdings-rows">
-            {shown.map((holding) => (
+            {shown.map((holding, index) => (
               <HoldingRow
                 key={holding.instrumentId}
                 holding={holding}
@@ -140,6 +141,11 @@ export function HoldingsPanel({
                 days={history.days}
                 historyLoading={history.isLoading}
                 now={now}
+                /* Only the tail this tap revealed. The top five were already
+                   on screen and must not blink when the button is pressed —
+                   and nothing animates on the way back in, because collapsing
+                   is the user putting something away, not the app arriving. */
+                revealed={expanded && index >= COMPACT_ROWS}
               />
             ))}
           </ul>
@@ -185,6 +191,8 @@ interface HoldingRowProps {
   days: string[]
   historyLoading: boolean
   now: number
+  /** Part of the tail that "All N" just unfolded — see the caller. */
+  revealed?: boolean
 }
 
 /**
@@ -204,6 +212,7 @@ function HoldingRow({
   days,
   historyLoading,
   now,
+  revealed = false,
 }: HoldingRowProps) {
   const instrument = instrumentLabel(holding.symbol, holding.name)
   // % of portfolio is already 0-100, so the bar is the number, drawn.
@@ -221,7 +230,12 @@ function HoldingRow({
       : "new"
 
   return (
-    <li className="relative grid grid-cols-[minmax(0,1fr)_auto_auto] items-baseline gap-x-3 border-b border-border py-2">
+    <li
+      className={cn(
+        "relative grid grid-cols-[minmax(0,1fr)_auto_auto] items-baseline gap-x-3 border-b border-border py-2",
+        revealed && REVEAL
+      )}
+    >
       <div className="min-w-0">
         {/* A ticker is a code and earns monospace; a company name is prose and
             doesn't — same call the feed row makes, so the two read as one app. */}

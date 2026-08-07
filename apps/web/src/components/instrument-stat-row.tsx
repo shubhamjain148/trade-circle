@@ -4,6 +4,7 @@ import { cn } from "@workspace/ui/lib/utils"
 
 import { feedHref } from "@/hooks/use-feed-route"
 import { instrumentLabel } from "@/lib/instrument"
+import { REVEAL } from "@/lib/motion"
 import type { GroupInstrument, StatsHolder } from "@/lib/types"
 
 interface InstrumentStatRowProps {
@@ -105,7 +106,13 @@ export function InstrumentStatRow({
       )}
 
       {expandable && open ? (
-        <ul id={holdersId} className="border-l border-border pl-3">
+        /* Same 200ms reveal the holdings tail and the settings sections use —
+           the caret was already turning on 150ms and the list it turned for
+           was arriving out of nowhere. */
+        <ul
+          id={holdersId}
+          className={cn("border-l border-border pl-3", REVEAL)}
+        >
           {instrument.holders.map((holder, index) => (
             <li
               key={holder.memberId ?? `anon-${index}`}

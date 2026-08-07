@@ -7,6 +7,7 @@ import { useNow } from "@/hooks/use-now"
 import { CONNECTION_COPY, connectionKey } from "@/lib/account"
 import { connectPath, connectStartPath, send } from "@/lib/api"
 import { absoluteTime, relativeTime } from "@/lib/format"
+import { REVEAL } from "@/lib/motion"
 import type { Account } from "@/lib/types"
 
 interface ConnectionCardProps {
@@ -117,10 +118,7 @@ export function ConnectionCard({ account, onChanged }: ConnectionCardProps) {
               size="sm"
               /* When it stands alone, its own padding is the only thing
                  indenting it away from the card's text edge. */
-              className={cn(
-                "text-muted-foreground",
-                !copy.action && "-ml-2.5"
-              )}
+              className={cn("text-muted-foreground", !copy.action && "-ml-2.5")}
               onClick={() => setConfirming(true)}
             >
               Disconnect
@@ -156,7 +154,11 @@ function ConfirmDisconnect({
   React.useEffect(() => confirmRef.current?.focus(), [])
 
   return (
-    <div className="mt-4 border-t border-border pt-3">
+    /* The question replaces the Disconnect button in place, so it needs the
+       same 200ms reveal the app's other disclosures use — a block of consequence
+       text that teleports in under your thumb is how people tap the wrong
+       thing. */
+    <div className={cn("mt-4 border-t border-border pt-3", REVEAL)}>
       <p className="text-sm text-foreground">
         Disconnect INDmoney? The group stops seeing your moves. Your past
         entries stay in the feed.

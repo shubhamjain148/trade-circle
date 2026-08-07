@@ -9,15 +9,13 @@ import {
   MessageScrollerProvider,
   MessageScrollerViewport,
 } from "@workspace/ui/components/message-scroller"
+import { cn } from "@workspace/ui/lib/utils"
 
 import {
   ChatMessageGroup,
   type MessageGroupItem,
 } from "@/components/chat-message-group"
-import {
-  Reactable,
-  type ReactionHandlers,
-} from "@/components/chat-reactions"
+import { Reactable, type ReactionHandlers } from "@/components/chat-reactions"
 import { FeedEventRow } from "@/components/feed-event-row"
 import {
   FeedNotice,
@@ -27,6 +25,12 @@ import {
 import type { ChatItem } from "@/hooks/use-chat"
 import { useNow } from "@/hooks/use-now"
 import { dayKey, dayLabel } from "@/lib/format"
+import {
+  ARRIVING_LINE,
+  isArriving,
+  resetArrivals,
+  settleArrivals,
+} from "@/lib/motion"
 import { reactionKey, type FeedEvent, type ReactionMap } from "@/lib/types"
 
 interface ChatTimelineProps extends ReactionHandlers {
@@ -153,6 +157,19 @@ export function ChatTimeline({
     [items, memberId, now]
   )
 
+  // Everything on screen when the thread first paints is history, not news.
+  // Keyed on "are there rows yet" rather than on mount, because the mount
+  // usually happens while the skeleton is still up — settling then would call
+  // the entire first page an arrival and animate all of it.
+  const painted = entries.length > 0
+  React.useEffect(() => {
+    if (painted) settleArrivals()
+  }, [painted])
+
+  // Leaving the chat ends the session's memory of it: coming back is a cold
+  // load again, and a cold load animates nothing.
+  React.useEffect(() => resetArrivals, [])
+
   if (isLoading && items.length === 0) {
     return (
       <Frame>
@@ -208,20 +225,23 @@ export function ChatTimeline({
                 /* The shipped 10rem guess is a chat with paragraphs in it;
                    most lines here are one sentence, and over-reserving makes
                    the scrollbar breathe on every pass. */
-                className="[contain-intrinsic-size:auto_3rem]"
+                className={cn(
+                  "[contain-intrinsic-size:auto_3rem]",
+                  isArriving(entry.key) && ARRIVING_LINE
+                )}
               >
                 {entry.kind === "day" ? (
                   <DaySeparator label={entry.label} />
                 ) : entry.kind === "events" ? (
-                  /* Trades are not speech: a full-width band with hairlines
-                     top and bottom, keeping the feed's mono tag, % and time. */
+                  /* Trades are not speech: a full-width band with hairlines top and
+               bottom, keeping the feed's mono tag, % and time. */
                   <div className="-mx-2 divide-y divide-border border-y border-border">
                     {entry.events.map((event) => (
                       /* The Reactable is the band's cell, so `divide-y` still
-                         separates one trade from the next and the pills sit
-                         inside the row they belong to. FeedEventRow itself is
-                         untouched — the member feed renders the same component
-                         with no wrapper and is pixel-for-pixel what it was. */
+                   separates one trade from the next and the pills sit inside
+                   the row they belong to. FeedEventRow itself is untouched —
+                   the member feed renders the same component with no wrapper
+                   and is pixel-for-pixel what it was. */
                       <Reactable
                         key={event.id}
                         itemKind="event"
@@ -229,9 +249,9 @@ export function ChatTimeline({
                         reactions={reactions[reactionKey("event", event.id)]}
                         label={`React to ${event.accountName}'s ${event.symbol} move`}
                         onReact={onReact}
-                        /* The pills are indented to the row's own gutter and
-                           bring their own bottom padding, so a band with no
-                           reactions is the band that was already there. */
+                        /* The pills are indented to the row's own gutter and bring
+                     their own bottom padding, so a band with no reactions is
+                     the band that was already there. */
                         pillsClassName="px-2 pb-1.5"
                       >
                         <FeedEventRow as="div" event={event} now={now} />

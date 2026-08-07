@@ -24,8 +24,16 @@ function typingLabel(names: string[]): string {
  * of motion this app doesn't do.
  *
  * Mono, muted, 3xs — the same register as the disclaimer directly below it, so
- * it reads as chrome rather than as speech. The pulse is the only movement, it
- * is opacity only, and it is off under prefers-reduced-motion.
+ * it reads as chrome rather than as speech.
+ *
+ * Two motions, and they do different jobs. The outer span *arrives* — 150ms
+ * fade and a 2px rise, because someone starting to type is news and news that
+ * blinks into existence reads as a rendering glitch. The inner span *breathes*
+ * — the existing pulse, opacity only, saying the claim is still live. Nesting
+ * them is not decoration: one element cannot run an entrance and a loop at
+ * once, they'd be the same `animation` property.
+ *
+ * Both are off under prefers-reduced-motion.
  */
 export function ChatTypingLine({ typing }: ChatTypingLineProps) {
   const label = typingLabel(typing.map((t) => t.name))
@@ -36,8 +44,10 @@ export function ChatTypingLine({ typing }: ChatTypingLineProps) {
       className="h-4 shrink-0 truncate pb-1 font-mono text-3xs tracking-wide text-muted-foreground"
     >
       {label ? (
-        <span className="animate-pulse motion-reduce:animate-none">
-          {label}
+        <span className="inline-block animate-in duration-150 ease-out fade-in slide-in-from-bottom-1 motion-reduce:animate-none">
+          <span className="animate-pulse motion-reduce:animate-none">
+            {label}
+          </span>
         </span>
       ) : null}
     </p>

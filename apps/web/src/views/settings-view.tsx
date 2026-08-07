@@ -111,11 +111,15 @@ function ConnectedConfirmation() {
   return (
     <div
       role="status"
-      className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-2 duration-300 ease-out animate-in fade-in slide-in-from-bottom-1 motion-reduce:animate-none"
+      className="grid animate-in grid-cols-[auto_minmax(0,1fr)] gap-x-2 duration-300 ease-out fade-in slide-in-from-bottom-1 motion-reduce:animate-none"
     >
+      {/* The dot lands a beat after the sentence it belongs to — the one
+          flourish on this screen, and it is the moment the whole connect flow
+          was for. Scale and opacity, 200ms, no overshoot: a confirmation, not
+          a celebration. */}
       <span
         aria-hidden
-        className="mt-[0.5rem] size-1.5 shrink-0 rounded-full bg-pos-up"
+        className="mt-[0.5rem] size-1.5 shrink-0 animate-in rounded-full bg-pos-up delay-200 duration-200 ease-out fill-mode-backwards zoom-in-50 fade-in motion-reduce:animate-none motion-reduce:delay-0"
       />
       {/* Deliberately hands off to the card below rather than promising an
           outcome: the first fetch is already running, and the card is the
@@ -318,8 +322,8 @@ function VisibilitySection({ member }: { member: Member }) {
         /* When it applies matters as much as what it does: this is read-time,
            not a flag on new events, so the feed's past changes with it. */
         <p className="pt-2.5 font-mono text-2xs leading-relaxed tracking-wide text-muted-foreground">
-          Applies straight away, to what's already in the feed as well as
-          what's next.
+          Applies straight away, to what's already in the feed as well as what's
+          next.
         </p>
       )}
     </section>

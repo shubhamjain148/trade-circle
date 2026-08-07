@@ -5,6 +5,30 @@
 @import "@fontsource-variable/instrument-sans";
 
 @custom-variant dark (&:is(.dark *));
+
+/*
+ * MOTION VOCABULARY — three durations, one curve, no library.
+ *
+ * There is nothing to define here, and that is the point: everything moves on
+ * Tailwind's own `ease-out` and one of three `duration-*` steps, composed with
+ * tw-animate-css's `animate-in`. Any new motion picks a tier below rather than
+ * inventing a fourth, and any easing that isn't `ease-out` needs a reason in a
+ * comment — this app has no bounce and no elastic in it anywhere.
+ *
+ *   150ms  affordances and live signals — the quick-react row opening, a
+ *          "typing…" line arriving, the stats caret turning. Frequent enough
+ *          that being fast matters more than being seen.
+ *   200ms  arrivals and disclosures — a message or reaction landing in the
+ *          thread, a section unfolding, an inline confirmation appearing.
+ *          The default; when in doubt this is the answer.
+ *   300ms  once-in-a-while screens — the join welcome, the connect
+ *          confirmation. The only tier allowed a stagger (75ms between beats).
+ *
+ * Rules that hold everywhere: transform and opacity only; exits are shorter
+ * than entrances or simply instant; nothing that a keyboard triggers animates;
+ * numbers people are reading (sparklines, weights, stats) never move; and every
+ * one of them carries `motion-reduce:animate-none`.
+ */
 @source "../../../apps/**/*.{ts,tsx}";
 @source "../../../components/**/*.{ts,tsx}";
 @source "../**/*.{ts,tsx}";
