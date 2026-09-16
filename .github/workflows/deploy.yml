@@ -80,10 +80,11 @@ jobs:
           pnpm exec wrangler deploy "${args[@]}"
 
       - name: Sync Worker secrets (only those set in this repo)
-        if: ${{ secrets.APP_SECRET != '' || secrets.VAPID_PRIVATE_KEY != '' }}
+        # `secrets` is not allowed in a step `if`; go through env instead.
         env:
           APP_SECRET: ${{ secrets.APP_SECRET }}
           VAPID_PRIVATE_KEY: ${{ secrets.VAPID_PRIVATE_KEY }}
+        if: env.APP_SECRET != '' || env.VAPID_PRIVATE_KEY != ''
         run: |
           node -e '
             const out = {};
