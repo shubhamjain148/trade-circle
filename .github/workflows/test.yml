@@ -1,0 +1,28 @@
+# Typecheck + tests for every pull request and every push to main. The `test`
+# job is the required status check on main (repository ruleset), so a PR cannot
+# merge until it passes. Deploys are separate — see deploy.yml and
+# docs/DEPLOYMENT.md.
+name: Test
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  test:
+    name: test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter server typecheck
+      - run: pnpm --filter server test
+      - run: pnpm --filter web build
