@@ -12,8 +12,8 @@ Research and decisions: [docs/RESEARCH.md](docs/RESEARCH.md).
 
 ## Self-hosting
 
-Fork this repo, create a Worker and a D1 database, add a handful of repository secrets, and every
-push to `main` deploys via GitHub Actions. The full runbook, including the one-time secrets and how
+Fork this repo, create a Worker and a D1 database, connect the fork to the Worker with Cloudflare
+Workers Builds, and every push to `main` deploys itself (a GitHub Actions fallback is included). The full runbook, including the one-time secrets and how
 to create the first admin, is in [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
 
 ## Structure

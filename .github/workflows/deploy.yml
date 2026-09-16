@@ -1,7 +1,11 @@
-# Deploys the Worker to Cloudflare on every push to main.
+# Manual fallback deploy via GitHub Actions (Actions → Deploy → Run workflow).
 #
-# Everything account-specific comes from repository secrets, so a fork can
-# deploy its own group by setting these under Settings → Secrets → Actions:
+# The primary deploy path is Cloudflare Workers Builds, connected to this repo
+# in the Cloudflare dashboard — see docs/DEPLOYMENT.md, "Automated deploys".
+# This workflow exists for forks that would rather deploy from GitHub with a
+# Cloudflare API token. It never runs on push, so the two paths cannot both
+# fire on the same commit. Everything account-specific comes from repository
+# secrets, set under Settings → Secrets → Actions:
 #
 #   CLOUDFLARE_API_TOKEN    Workers Scripts:Edit, D1:Edit, Account Settings:Read
 #   CLOUDFLARE_ACCOUNT_ID   dash.cloudflare.com/<this id>/...
@@ -19,8 +23,6 @@
 name: Deploy
 
 on:
-  push:
-    branches: [main]
   workflow_dispatch:
 
 concurrency:
@@ -45,7 +47,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version-file: .nvmrc
           cache: pnpm
 
       - name: Install

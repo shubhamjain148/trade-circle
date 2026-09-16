@@ -179,25 +179,49 @@ so this is the one part of the feature that cannot be verified before a deploy. 
 
 The sender never notifies itself, so test with two devices signed in as two different members.
 
-### Automated deploys (GitHub Actions)
+### Automated deploys (Cloudflare Workers Builds)
 
-`.github/workflows/deploy.yml` runs typecheck + tests, builds the web app, applies pending D1
-migrations and deploys the Worker on every push to `main`. Nothing account-specific is in the repo;
-it all comes from **Settings → Secrets and variables → Actions** on your fork:
+The Worker deploys itself from GitHub: connect the repo to the Worker once in the dashboard and
+every push to `main` runs the build, applies pending D1 migrations and deploys. No API token is
+stored anywhere — Cloudflare mints a scoped one per build.
 
-| Secret | Value |
+**Workers & Pages → your Worker → Settings → Build → Connect** (or *Git repository* on a new
+Worker), then:
+
+| Setting | Value |
 | --- | --- |
-| `CLOUDFLARE_API_TOKEN` | Custom token with *Workers Scripts: Edit*, *D1: Edit*, *Account Settings: Read* |
-| `CLOUDFLARE_ACCOUNT_ID` | The id in your dashboard URL, `dash.cloudflare.com/<id>/…` |
+| Git repository | your fork |
+| Production branch | `main` |
+| Root directory | `apps/server` |
+| Build command | `pnpm --filter server typecheck && pnpm --filter server test && pnpm --filter web build && sed -i "s/REPLACE_WITH_D1_DATABASE_ID/$D1_DATABASE_ID/" wrangler.jsonc` |
+| Deploy command | `npx wrangler d1 migrations apply DB --remote && npx wrangler deploy --name "$WORKER_NAME" --var "APP_URL:$APP_URL" --var "VAPID_PUBLIC_KEY:$VAPID_PUBLIC_KEY" --var "VAPID_SUBJECT:$VAPID_SUBJECT"` |
+
+and under **Build variables and secrets**:
+
+| Variable | Value |
+| --- | --- |
+| `NODE_VERSION` | `24` (tests use `node:sqlite`) |
 | `D1_DATABASE_ID` | From `wrangler d1 create` (step 2) |
-| `WORKER_NAME` | The Worker to deploy to, e.g. `trade-circle` |
+| `WORKER_NAME` | The Worker the build is attached to, e.g. `trade-circle` |
 | `APP_URL` | `https://<WORKER_NAME>.<your-subdomain>.workers.dev` (step 6) |
-| `VAPID_PUBLIC_KEY`, `VAPID_SUBJECT` | From step 4b. Optional; omit both to run without push |
-| `APP_SECRET`, `VAPID_PRIVATE_KEY` | Optional. If set, the workflow writes them to the Worker for you instead of `wrangler secret put` |
+| `VAPID_PUBLIC_KEY`, `VAPID_SUBJECT` | From step 4b. Running without push? Drop the two `--var` flags from the deploy command instead of leaving these empty — VAPID is all three or none |
+
+`APP_SECRET` and `VAPID_PRIVATE_KEY` stay Worker secrets (`wrangler secret put`, steps 4 and 4b);
+builds never see them. The checked-in `wrangler.jsonc` carries none of these values, which is what
+lets the repo be public and one checkout serve any group.
 
 The first deploy is a chicken-and-egg on `APP_URL`: set it to the URL the Worker *will* have
-(`https://<WORKER_NAME>.<your-subdomain>.workers.dev`; your subdomain is under Workers & Pages →
-Overview) and it is right from the start.
+(your `workers.dev` subdomain is under Workers & Pages → Overview) and it is right from the start.
+
+#### Alternative: GitHub Actions
+
+`.github/workflows/deploy.yml` does the same job from GitHub's side, for forks that prefer it. It
+is manual-only (*Actions → Deploy → Run workflow*) so the two paths never double-deploy one commit.
+It needs the same values as repository secrets, plus `CLOUDFLARE_API_TOKEN` (a custom token with
+*Workers Scripts: Edit*, *D1: Edit*, *Account Settings: Read*) and `CLOUDFLARE_ACCOUNT_ID`. It can
+also seed `APP_SECRET` and `VAPID_PRIVATE_KEY` onto the Worker if you set them as secrets. If you
+switch to it permanently, change its trigger back to `push: branches: [main]` and disconnect Workers
+Builds.
 
 ### Rollback
 
