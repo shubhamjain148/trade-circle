@@ -31,7 +31,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     appSecret: resolveSecret(env),
     sessionTtlMs: 90 * 86_400_000,
     oauthStateTtlMs: 10 * 60_000,
-    clientName: env.MCP_CLIENT_NAME ?? "indmoney-watcher",
+    clientName: env.MCP_CLIENT_NAME ?? "trade-circle",
     vapid: resolveVapid(env),
   };
 }

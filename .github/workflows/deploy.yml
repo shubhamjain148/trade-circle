@@ -1,0 +1,92 @@
+# Deploys the Worker to Cloudflare on every push to main.
+#
+# Everything account-specific comes from repository secrets, so a fork can
+# deploy its own group by setting these under Settings → Secrets → Actions:
+#
+#   CLOUDFLARE_API_TOKEN    Workers Scripts:Edit, D1:Edit, Account Settings:Read
+#   CLOUDFLARE_ACCOUNT_ID   dash.cloudflare.com/<this id>/...
+#   D1_DATABASE_ID          printed by `wrangler d1 create <name>`
+#   WORKER_NAME             the Worker to deploy to, e.g. trade-circle
+#   APP_URL                 https://<WORKER_NAME>.<your-subdomain>.workers.dev
+#   VAPID_PUBLIC_KEY        from `pnpm --filter server vapid:generate` (optional)
+#   VAPID_SUBJECT           mailto:you@example.com (optional, set with the key)
+#
+# Optional. Set once to seed the Worker's secrets from here instead of running
+# `wrangler secret put` by hand. They are only written when present:
+#
+#   APP_SECRET              `openssl rand -base64 48`
+#   VAPID_PRIVATE_KEY       the other half of VAPID_PUBLIC_KEY
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    defaults:
+      run:
+        working-directory: apps/server
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+        working-directory: .
+
+      - name: Typecheck and test
+        run: pnpm --filter server typecheck && pnpm --filter server test
+        working-directory: .
+
+      - name: Build web app
+        run: pnpm --filter web build
+        working-directory: .
+
+      - name: Point wrangler.jsonc at this deployment's database
+        run: |
+          test -n "${{ secrets.D1_DATABASE_ID }}" || { echo "D1_DATABASE_ID secret is not set"; exit 1; }
+          sed -i 's/REPLACE_WITH_D1_DATABASE_ID/${{ secrets.D1_DATABASE_ID }}/' wrangler.jsonc
+          grep -q REPLACE_WITH_D1_DATABASE_ID wrangler.jsonc && exit 1 || true
+
+      - name: Apply D1 migrations
+        run: pnpm exec wrangler d1 migrations apply DB --remote
+
+      - name: Deploy
+        run: |
+          args=(--name "${{ secrets.WORKER_NAME }}" --var "APP_URL:${{ secrets.APP_URL }}")
+          if [ -n "${{ secrets.VAPID_PUBLIC_KEY }}" ]; then
+            args+=(--var "VAPID_PUBLIC_KEY:${{ secrets.VAPID_PUBLIC_KEY }}" --var "VAPID_SUBJECT:${{ secrets.VAPID_SUBJECT }}")
+          fi
+          pnpm exec wrangler deploy "${args[@]}"
+
+      - name: Sync Worker secrets (only those set in this repo)
+        if: ${{ secrets.APP_SECRET != '' || secrets.VAPID_PRIVATE_KEY != '' }}
+        env:
+          APP_SECRET: ${{ secrets.APP_SECRET }}
+          VAPID_PRIVATE_KEY: ${{ secrets.VAPID_PRIVATE_KEY }}
+        run: |
+          node -e '
+            const out = {};
+            for (const k of ["APP_SECRET", "VAPID_PRIVATE_KEY"]) if (process.env[k]) out[k] = process.env[k];
+            process.stdout.write(JSON.stringify(out));
+          ' > /tmp/secrets.json
+          pnpm exec wrangler secret bulk /tmp/secrets.json --name "${{ secrets.WORKER_NAME }}"
+          rm -f /tmp/secrets.json

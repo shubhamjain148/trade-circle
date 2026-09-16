@@ -14,8 +14,8 @@
     "test": "NODE_ENV=test node --import tsx --test \"src/**/*.test.ts\"",
     "typecheck": "tsc --noEmit",
     "cf:dev": "wrangler dev --test-scheduled",
-    "cf:migrate:local": "wrangler d1 migrations apply indmoney-watcher --local",
-    "cf:migrate": "wrangler d1 migrations apply indmoney-watcher --remote",
+    "cf:migrate:local": "wrangler d1 migrations apply DB --local",
+    "cf:migrate": "wrangler d1 migrations apply DB --remote",
     "cf:types": "wrangler types",
     "cf:check": "wrangler deploy --dry-run",
     "cf:deploy": "pnpm --filter web build && wrangler deploy"

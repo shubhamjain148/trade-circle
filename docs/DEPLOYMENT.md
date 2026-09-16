@@ -58,16 +58,18 @@ pnpm exec wrangler whoami
 **2. Create the database.**
 
 ```bash
-pnpm exec wrangler d1 create indmoney-watcher
+pnpm exec wrangler d1 create trade-circle
 ```
 
-Copy the printed `database_id` into `wrangler.jsonc` — it replaces
-`"REPLACE_WITH_D1_DATABASE_ID"`. Commit that; it is an identifier, not a secret.
+Keep the printed `database_id`. For automated deploys it becomes the `D1_DATABASE_ID` repository
+secret (see "Automated deploys" below). For a manual deploy from your machine, paste it over
+`"REPLACE_WITH_D1_DATABASE_ID"` in `wrangler.jsonc` locally — but do not commit it: the checked-in
+file is deliberately account-free so the repo can be public and one checkout can serve any group.
 
 **3. Apply the schema.**
 
 ```bash
-pnpm cf:migrate          # wrangler d1 migrations apply indmoney-watcher --remote
+pnpm cf:migrate          # wrangler d1 migrations apply DB --remote
 ```
 
 **4. Set the vault key.** This is the only real secret. It keys AES-256-GCM over every access and
@@ -88,16 +90,10 @@ has to go turn notifications on.
 pnpm --filter server vapid:generate    # prints one keypair and these commands
 ```
 
-Put the **public** key and the subject in `wrangler.jsonc` under `vars` (both are public — the
-public key travels in every push request's `Authorization` header), and the **private** key in a
-secret:
-
-```jsonc
-"vars": {
-  "VAPID_PUBLIC_KEY": "<from vapid:generate>",
-  "VAPID_SUBJECT": "mailto:you@example.com"
-}
-```
+The **public** key and the subject are public values (the key travels in every push request's
+`Authorization` header). They are passed at deploy time — `VAPID_PUBLIC_KEY` and `VAPID_SUBJECT`
+repository secrets for automated deploys, or `--var` flags for a manual one. The **private** key is
+a Worker secret:
 
 ```bash
 pnpm exec wrangler secret put VAPID_PRIVATE_KEY
@@ -116,30 +112,26 @@ them. Keep it somewhere you keep `APP_SECRET`.
 pnpm cf:deploy           # pnpm --filter web build && wrangler deploy
 ```
 
-Wrangler prints `https://indmoney-watcher.<your-subdomain>.workers.dev`.
+Wrangler prints `https://trade-circle.<your-subdomain>.workers.dev`.
 
 **6. Pin `APP_URL` to that URL and redeploy.** `APP_URL` is what the OAuth redirect URI is built
 from (`{APP_URL}/api/connect/indmoney/callback`) and where the settings page redirects back to. If
 it is wrong, connect fails at INDmoney's end with a redirect-URI mismatch.
 
-Add it to `wrangler.jsonc`:
-
-```jsonc
-"vars": {
-  "MCP_CLIENT_NAME": "indmoney-watcher",
-  "APP_URL": "https://indmoney-watcher.<your-subdomain>.workers.dev"
-}
-```
+It is not in `wrangler.jsonc` (that file is account-free); pass it at deploy time:
 
 ```bash
-pnpm cf:deploy
+pnpm --filter web build
+pnpm exec wrangler deploy --var "APP_URL:https://trade-circle.<your-subdomain>.workers.dev"
 ```
+
+Automated deploys read it from the `APP_URL` repository secret instead.
 
 **7. Create yourself, then everyone else.** There is no CLI on Workers, so the first admin has to
 be written straight into D1:
 
 ```bash
-pnpm exec wrangler d1 execute indmoney-watcher --remote --command \
+pnpm exec wrangler d1 execute DB --remote --command \
   "INSERT INTO members (id, name, visibility, role, created_at) \
    VALUES ('m1','<your name>','named','admin','$(date -u +%Y-%m-%dT%H:%M:%S.000Z)')"
 ```
@@ -152,7 +144,7 @@ node -e 'const t=require("crypto").randomBytes(32).toString("base64url");
 const h=require("crypto").createHash("sha256").update(t).digest("base64url");
 console.log("token:",t);console.log("hash: ",h)'
 
-pnpm exec wrangler d1 execute indmoney-watcher --remote --command \
+pnpm exec wrangler d1 execute DB --remote --command \
   "INSERT INTO invite_tokens (token_hash, member_id, created_at) VALUES ('<hash>','m1','$(date -u +%Y-%m-%dT%H:%M:%S.000Z)')"
 ```
 
@@ -186,6 +178,26 @@ so this is the one part of the feature that cannot be verified before a deploy. 
 6. `wrangler tail` shows `{"msg":"push fan-out","sent":N,"removed":N,"failed":N}`.
 
 The sender never notifies itself, so test with two devices signed in as two different members.
+
+### Automated deploys (GitHub Actions)
+
+`.github/workflows/deploy.yml` runs typecheck + tests, builds the web app, applies pending D1
+migrations and deploys the Worker on every push to `main`. Nothing account-specific is in the repo;
+it all comes from **Settings → Secrets and variables → Actions** on your fork:
+
+| Secret | Value |
+| --- | --- |
+| `CLOUDFLARE_API_TOKEN` | Custom token with *Workers Scripts: Edit*, *D1: Edit*, *Account Settings: Read* |
+| `CLOUDFLARE_ACCOUNT_ID` | The id in your dashboard URL, `dash.cloudflare.com/<id>/…` |
+| `D1_DATABASE_ID` | From `wrangler d1 create` (step 2) |
+| `WORKER_NAME` | The Worker to deploy to, e.g. `trade-circle` |
+| `APP_URL` | `https://<WORKER_NAME>.<your-subdomain>.workers.dev` (step 6) |
+| `VAPID_PUBLIC_KEY`, `VAPID_SUBJECT` | From step 4b. Optional; omit both to run without push |
+| `APP_SECRET`, `VAPID_PRIVATE_KEY` | Optional. If set, the workflow writes them to the Worker for you instead of `wrangler secret put` |
+
+The first deploy is a chicken-and-egg on `APP_URL`: set it to the URL the Worker *will* have
+(`https://<WORKER_NAME>.<your-subdomain>.workers.dev`; your subdomain is under Workers & Pages →
+Overview) and it is right from the start.
 
 ### Rollback
 

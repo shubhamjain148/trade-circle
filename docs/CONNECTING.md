@@ -29,7 +29,7 @@ own consent screen.
 
 **What that screen shows.** The friend logs in on `indmoney.com` with their usual
 mobile number, OTP and MPIN — this server never sees any of it. The consent screen
-names the client (`indmoney-watcher` by default; set `MCP_CLIENT_NAME` to change it)
+names the client (`trade-circle` by default; set `MCP_CLIENT_NAME` to change it)
 and the two scopes being requested:
 
 - `portfolio:read` — holdings, quantities, P&L, XIRR, SIPs

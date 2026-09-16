@@ -6,7 +6,7 @@ import {
 } from "@modelcontextprotocol/client";
 import { isExpired, refreshConnection, type McpDeps } from "./oauth.js";
 
-const CLIENT_INFO = { name: "indmoney-watcher", version: "0.0.1" };
+const CLIENT_INFO = { name: "trade-circle", version: "0.0.1" };
 
 /** Raised when refresh is impossible; the caller flips the account to needs_reauth. */
 export class NeedsReauthError extends Error {

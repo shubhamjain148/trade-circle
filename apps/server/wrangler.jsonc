@@ -1,6 +1,6 @@
 {
   "$schema": "./node_modules/wrangler/config-schema.json",
-  "name": "indmoney-watcher",
+  "name": "trade-circle",
   "main": "src/worker.ts",
   "compatibility_date": "2026-08-06",
 
@@ -14,9 +14,12 @@
   "d1_databases": [
     {
       "binding": "DB",
-      "database_name": "indmoney-watcher",
-      // Filled in by `wrangler d1 create indmoney-watcher` — see docs/DEPLOYMENT.md.
-      "database_id": "ff33c815-4c39-48f2-9c83-79703a4d6f96",
+      "database_name": "trade-circle",
+      // Placeholder on purpose. The deploy workflow (.github/workflows/deploy.yml)
+      // substitutes the D1_DATABASE_ID repo secret at deploy time; for a manual
+      // deploy, paste the id printed by `wrangler d1 create` here locally and do
+      // not commit it. See docs/DEPLOYMENT.md.
+      "database_id": "REPLACE_WITH_D1_DATABASE_ID",
       "migrations_dir": "./migrations"
     }
   ],
@@ -57,32 +60,32 @@
   },
 
   "vars": {
-    "MCP_CLIENT_NAME": "indmoney-watcher",
-    "APP_URL": "https://indmoney-watcher.shubhjai.workers.dev",
+    "MCP_CLIENT_NAME": "trade-circle",
     // Cloudflare's runtime caps WebCrypto PBKDF2 at 100k iterations (production
     // enforces it; miniflare doesn't). Fine here: the secret is 48 random bytes,
     // so KDF stretching adds little — hardness matters for guessable passwords.
-    "VAULT_KDF_ITERATIONS": "100000",
+    "VAULT_KDF_ITERATIONS": "100000"
 
-    // Web Push. Fill these in at deploy from `pnpm --filter server vapid:generate`
-    // and set VAPID_PRIVATE_KEY with `wrangler secret put` — never here.
-    // All three or none: src/worker.ts refuses a half-configured VAPID rather
-    // than shipping an Enable button whose every send silently fails.
+    // Deployment-specific values are deliberately NOT here, so the file can be
+    // public and one checkout can serve any group. The deploy workflow passes
+    // them with `wrangler deploy --var` from repo secrets; `.dev.vars` supplies
+    // them for `wrangler dev`:
     //
-    // The pair is permanent. Rotating it invalidates every subscription the
-    // group has made, and each friend would have to open Settings and turn
-    // notifications on again with nothing telling them to.
-    "VAPID_PUBLIC_KEY": "BDITCpGgN1npV8Pqwh89nCDkPk5S1JYbTn7jaBHWDRGrdcq70w-hwMadUNi65jduvqxECm349aA-JylAHBT-xjk",
-    "VAPID_SUBJECT": "mailto:shubham.jain148@gmail.com"
-    // MCP_BASE_URL is deliberately NOT here. A key present in `vars` wins over
-    // the same key in .dev.vars, so declaring it would make `wrangler dev`
+    //   APP_URL           https://<worker-name>.<your-subdomain>.workers.dev
+    //   VAPID_PUBLIC_KEY  from `pnpm --filter server vapid:generate`
+    //   VAPID_SUBJECT     mailto:you@example.com
+    //
+    // VAPID is all three or none: src/worker.ts refuses a half-configured VAPID
+    // rather than shipping an Enable button whose every send silently fails.
+    // The keypair is permanent — rotating it invalidates every subscription.
+    //
+    // MCP_BASE_URL is deliberately NOT here either. A key present in `vars` wins
+    // over the same key in .dev.vars, so declaring it would make `wrangler dev`
     // unable to point at a local fake and every local connect attempt would
     // reach the real INDmoney authorization server and register a DCR client
-    // there. src/worker.ts defaults it to https://mcp.indmoney.com/mcp instead,
-    // which is what production wants anyway.
+    // there. src/worker.ts defaults it to https://mcp.indmoney.com/mcp instead.
     //
-    // APP_URL is set per-deploy; see docs/DEPLOYMENT.md.
-    // APP_SECRET is a secret, never a var: `wrangler secret put APP_SECRET`.
+    // Secrets (`wrangler secret put`, never vars): APP_SECRET, VAPID_PRIVATE_KEY.
   },
 
   "observability": {

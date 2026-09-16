@@ -59,7 +59,7 @@ const frames: Record<string, Position[][]> = {
 };
 
 const members = [
-  { id: "m1", name: "Shubham", visibility: "named" as const, role: "admin" as const },
+  { id: "m1", name: "Priya", visibility: "named" as const, role: "admin" as const },
   { id: "m2", name: "Rahul", visibility: "named" as const, role: "member" as const },
   { id: "m3", name: "Anjali", visibility: "named" as const, role: "member" as const },
 ];

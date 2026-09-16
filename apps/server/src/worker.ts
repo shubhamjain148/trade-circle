@@ -118,7 +118,7 @@ function wire(env: Env): Wiring {
     appSecret: env.APP_SECRET,
     sessionTtlMs: 90 * 86_400_000,
     oauthStateTtlMs: 10 * 60_000,
-    clientName: env.MCP_CLIENT_NAME ?? "indmoney-watcher",
+    clientName: env.MCP_CLIENT_NAME ?? "trade-circle",
   };
 
   const storage = new D1Storage(env.DB);

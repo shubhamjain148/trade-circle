@@ -35,7 +35,7 @@ const frames: Record<string, Position[][]> = {
     [p(...NVDA, 14, 812, 910), p(...AAPL, 20, 190, 215)],
     // 4:1 NVDA split, same tick as Rahul's — H2 should suppress both.
     [p(...NVDA, 56, 203, 227.5), p(...AAPL, 20, 190, 215)],
-    // 2:1 AAPL split held by Shubham alone — only H1 can catch this one.
+    // 2:1 AAPL split held by Priya alone — only H1 can catch this one.
     [p(...NVDA, 56, 203, 228), p(...AAPL, 40, 95, 107.5)],
     [p(...NVDA, 56, 203, 231), p(...AAPL, 40, 95, 108), p(...GOOGL, 12, 168, 175)],
   ],
@@ -60,7 +60,7 @@ const frames: Record<string, Position[][]> = {
 // m1 is the admin: someone has to be able to hand out the first invite from
 // the UI, and a seeded group with no admin can only be fixed from a shell.
 const members = [
-  { id: "m1", name: "Shubham", visibility: "named" as const, role: "admin" as const },
+  { id: "m1", name: "Priya", visibility: "named" as const, role: "admin" as const },
   { id: "m2", name: "Rahul", visibility: "named" as const, role: "member" as const },
   { id: "m3", name: "Anjali", visibility: "named" as const, role: "member" as const },
 ];
